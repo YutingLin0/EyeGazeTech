@@ -39,6 +39,7 @@ function renderRoom(next) {
   const changed = next?.round !== state?.round || (!next && state);
   state = next;
   const timer = byId('timer');
+  const boardClock = byId('board-clock');
   const ranks = byId('ranks');
   const advance = byId('advance');
   const controls = byId('room-controls');
@@ -59,6 +60,9 @@ function renderRoom(next) {
     resetDwell();
     buildTiles(next?.challenge?.tiles ?? practiceWords);
   }
+  boardClock.hidden = !canPlay();
+  if (!boardClock.hidden) boardClock.textContent = remaining() + ' seconds';
+  byId('board-title').textContent = canPlay() ? 'Round ' + (next.round + 1) + ' of ' + next.count : 'Practice board';
   byId('speak').textContent = canPlay() ? 'Speak & submit' : 'Speak message';
   byId('challenge-text').textContent = canPlay()
     ? next.challenge.clue + ' Build “' + next.challenge.phrase + '.”'
@@ -164,6 +168,7 @@ setInterval(refresh, 1800);
 setInterval(() => {
   if (state?.phase === 'playing') {
     byId('timer').textContent = remaining() + 's';
+    if (!byId('board-clock').hidden) byId('board-clock').textContent = remaining() + ' seconds';
     if (!remaining()) resetDwell();
   }
 }, 250);

@@ -13,6 +13,30 @@ header{background:#102d35;color:white}header>div,main{width:min(100% - 2rem,70re
 @media(max-width:760px){.layout{grid-template-columns:1fr}header>div{padding:1.4rem 0}.grid button{min-height:3.6rem}}@media(max-height:540px){#field{inset:42% 5% 7%}}
 
 .match{margin-bottom:1rem;border-top:4px solid #028676}.match-head,.entry,.entry form{display:flex;align-items:end;gap:.7rem;flex-wrap:wrap}.match-head{justify-content:space-between;align-items:start}.entry input{font:inherit;border:1px solid var(--line);border-radius:.6rem;padding:.52rem;width:min(100%,12rem)}#code{text-transform:uppercase;width:8rem}#timer{font-size:1.5rem;font-variant-numeric:tabular-nums;font-weight:800;border-radius:1rem;background:#fceaca;padding:.3rem .85rem}#ranks{display:grid;grid-template-columns:repeat(auto-fit,minmax(10rem,1fr));gap:.35rem 1.9rem;padding-left:1.75rem;margin:.65rem 0 0}#ranks li{padding:.3rem .5rem;background:#f3f7f8;border-radius:.4rem;overflow-wrap:anywhere}#ranks li:first-child{background:#e8f5ef;font-weight:700}
+
+#board{padding:clamp(.8rem,2vw,1.5rem)}
+.board-head{display:flex;justify-content:space-between;gap:1rem;align-items:center}
+.board-head h2{margin:0}
+#board-clock{font-size:1rem;font-weight:750;background:#fceaca;border-radius:2rem;padding:.25rem .75rem;white-space:nowrap}
+#board .challenge{margin:.65rem 0 .45rem}
+.grid button{font-size:clamp(1.08rem,3vw,1.55rem);min-height:4.7rem}
+.actions button{min-height:3rem}
+.board-help{margin-top:.6rem;background:#f4f8f8;padding:.65rem .8rem}
+#stop-gaze{margin-top:.55rem}
+#point{display:grid;place-items:center;font-variant-numeric:tabular-nums;font-weight:800;background:conic-gradient(#29ba9e var(--sample,0%),#e0f6f1 0);box-shadow:0 0 0 5px #ffffff20}
+#field{inset:8% 4% 5%;pointer-events:none}
+#calibration #point{z-index:1}
+#calibration #leave{position:relative;z-index:2}
+#cursor{z-index:10000}
+body.gazing #board:not([hidden]){position:fixed;z-index:15;inset:0;border:0;border-radius:0;background:white;overflow:auto;overscroll-behavior:contain}
+body.gazing #board-inner{max-width:64rem;margin:auto}
+body.gazing #tiles button{height:clamp(2.5rem,12dvh,7rem);min-height:0}
+body.gazing #tiles.compact button{height:clamp(2.2rem,8dvh,5rem)}
+body.gazing #setup-actions,body.gazing .board-help{display:none}
+body.gazing .message{min-height:2.75rem;margin:.4rem 0;padding:.4rem .7rem}
+body.gazing #status{margin-top:.3rem}
+body.gazing #stop-gaze{min-height:2.5rem}
+@media(max-height:670px){body.gazing #board .challenge{padding:.35rem .7rem}body.gazing #board h2{font-size:1.05rem}body.gazing #board .actions button{min-height:2.5rem;padding:.35rem}body.gazing #stop-gaze{margin-top:.25rem;padding:.35rem .7rem}}
 </style>
 </head>
 <body>
@@ -21,13 +45,14 @@ header{background:#102d35;color:white}header>div,main{width:min(100% - 2rem,70re
 <!-- CLASSROOM LOBBY -->
 <div class="layout">
 <section class="panel" id="board" aria-labelledby="board-title">
-<h2 id="board-title">Communication board</h2>
-<div class="mode" aria-label="Input mode">
-<button type="button" id="start" class="primary">Start webcam gaze</button>
+<div id="board-inner">
+<div class="board-head"><h2 id="board-title">Practice board</h2><span id="board-clock" hidden></span></div>
+<div class="mode" id="setup-actions" aria-label="Input mode">
+<button type="button" id="start" class="primary">Enable eye gaze</button>
 <button type="button" id="hover" aria-pressed="false">Mouse dwell</button>
 <button type="button" id="click" aria-pressed="true">Click or keyboard</button>
 </div>
-<p class="status" id="status" role="status">Click or keyboard mode. The camera is off.</p>
+<p class="status" id="status" role="status">To play hands-free, enable eye gaze and allow camera access.</p>
 <p class="challenge"><strong>Your challenge</strong> · <span id="challenge-text">Build and speak “I want water.”</span></p>
 <div class="message" id="message" aria-label="Your message" aria-live="polite"></div>
 <div class="grid" id="tiles" aria-label="Words"></div>
@@ -37,26 +62,28 @@ header{background:#102d35;color:white}header>div,main{width:min(100% - 2rem,70re
 <button class="target" id="clear">Clear</button>
 </div>
 <p class="status" id="speech-status" role="status"></p>
-</section>
-<aside>
-<section class="panel"><h2>Compare settings</h2><p>Try the same message again. Change one setting and notice how it affects missed or accidental selections.</p>
+<button class="target" id="stop-gaze" hidden>Exit eye gaze</button>
+<details class="board-help"><summary>Input settings</summary>
 <div class="settings">
 <label>Dwell time<select id="time"><option value="750">0.75 seconds</option><option value="1200" selected>1.2 seconds</option><option value="1800">1.8 seconds</option></select></label>
 <label>Word tile size<select id="size"><option value="large">Large</option><option value="compact">Compact</option></select></label>
 </div>
-<p class="hint">Dwell means holding your gaze or pointer on a target until it activates. The bar shows your progress.</p>
+<p class="hint">Dwell means holding your gaze or pointer on a target until it activates.</p>
+</details>
+</div>
 </section>
+<aside>
 <section class="panel reflect"><h2>Discuss</h2><ol><li>Which setting made selecting words easier?</li><li>What happened when you looked at a word you did not mean to select?</li><li>What would you change for someone using this board every day?</li></ol></section>
 </aside>
 </div>
 <details><summary>10-minute facilitation plan</summary><dl><dt>0:00–2:30</dt><dd>Join with a nickname and spend this time practicing. Agree on webcam gaze or mouse dwell as a class before starting. Keep click and keyboard available for access needs.</dd><dt>2:30–5:30</dt><dd>Start the match and play three phrase rounds. Each correct message earns 100 points plus up to 30 for time left.</dd><dt>5:30–7:30</dt><dd>Review the leaderboard, then try the practice board with different tile sizes or dwell times.</dd><dt>7:30–10:00</dt><dd>Discuss accidental selections and how personalization could support daily communication.</dd></dl></details>
-<details><summary>Camera and accessibility</summary><p>This classroom prototype uses a standard webcam to estimate gaze. The video is processed in your browser and the activity does not save camera frames or calibration data. Select either mouse mode to turn the camera off. Tab to a control and press Enter or Space to activate it.</p><p>The TD I-Series uses dedicated eye-tracking hardware. Classroom webcam accuracy varies with lighting, positioning, and the device. Try mouse dwell to explore the timing if webcam tracking is difficult.</p><p><a href="https://webgazer.cs.brown.edu/">WebGazer project and documentation</a></p></details>
+<details><summary>Camera and accessibility</summary><p>This classroom prototype uses a standard webcam to estimate gaze. The video is processed in your browser and the activity does not save camera frames or calibration data. Look at Exit eye gaze to turn the camera off. If tracking drifts, turn it off and enable it again to recalibrate. Tab to a control and press Enter or Space to activate it.</p><p>The TD I-Series uses dedicated eye-tracking hardware. Classroom webcam accuracy varies with lighting, positioning, and the device. Try mouse dwell to explore the timing if webcam tracking is difficult.</p><p><a href="https://webgazer.cs.brown.edu/">WebGazer project and documentation</a></p></details>
 </main>
 <dialog id="calibration" aria-labelledby="cal-title">
 <h2 id="cal-title">Calibrate your gaze</h2>
-<p>Keep your head steady. Look directly at each dot, then click it three times while looking at it.</p>
+<p>Keep your head steady. Look at the dot until its ring fills, then follow it to the next spot.</p>
 <button id="leave">Use mouse dwell instead</button>
-<div id="field"><button id="point" disabled>1</button></div>
+<div id="field" aria-hidden="true"><span id="point" hidden>1</span></div>
 <p id="cal-status" role="status">Waiting for the camera and eye detection…</p>
 </dialog>
 <div id="cursor" hidden></div>
@@ -69,10 +96,11 @@ const speechStatus = byId('speech-status');
 const dialog = byId('calibration');
 const point = byId('point');
 const cursor = byId('cursor');
-const coords = [[6,8],[50,8],[94,8],[6,50],[50,50],[94,50],[6,92],[50,92],[94,92]];
+const coords = [[50,45],[10,10],[90,10],[90,49],[10,49],[10,87],[90,87],[50,87],[50,23]];
 let mode = 'click';
 let tracker, library, session = 0;
 let dot = 0, samples = 0, lastGaze = 0, gazePosition, gazeReady = false;
+let dotShown = 0, sampledAt = 0, lastEyes = 0, restorePrediction;
 let target, entered, fired, frame;
 
 function renderMessage() {
@@ -116,7 +144,7 @@ byId('speak').onclick = () => {
   utterance.onend = () => { speechStatus.textContent = 'Message spoken.'; };
   utterance.onerror = event => {
     if (!['canceled', 'interrupted'].includes(event.error)) {
-      speechStatus.textContent = 'Speech could not start. Try clicking Speak message.';
+      speechStatus.textContent = 'Audio is unavailable. You can still submit your message.';
     }
   };
   speechSynthesis.speak(utterance);
@@ -131,7 +159,7 @@ function resetDwell() {
   target = null;
 }
 function dwellAt(x, y) {
-  const next = document.elementFromPoint(x, y)?.closest('button.target');
+  const next = document.elementFromPoint(x, y)?.closest('button.target:not(:disabled)');
   if (next === target) return;
   resetDwell();
   if (!next) return;
@@ -143,11 +171,12 @@ function dwellAt(x, y) {
 }
 function tick(now) {
   if (!target || fired) return;
-  if (mode === 'gaze' && now - lastGaze > 220) {
+  if (mode === 'gaze' && now - lastGaze > 480) {
     resetDwell();
     return;
   }
-  const progress = Math.min(1, (now - entered) / Number(byId('time').value));
+  const duration = target.id === 'stop-gaze' ? 2200 : Number(byId('time').value);
+  const progress = Math.min(1, (now - entered) / duration);
   target.style.setProperty('--dwell', progress * 100 + '%');
   if (progress === 1) {
     fired = true;
@@ -170,6 +199,8 @@ byId('size').onchange = event => {
 };
 
 function stopCamera() {
+  restorePrediction?.();
+  restorePrediction = null;
   document.querySelector('#webgazerVideoFeed')?.srcObject?.getTracks().forEach(track => track.stop());
   try { tracker?.removeMouseEventListeners(); tracker?.end(); } catch {}
   cursor.hidden = true;
@@ -180,6 +211,8 @@ function setMode(next, notice) {
   session++;
   resetDwell();
   mode = next;
+  document.body.classList.toggle('gazing', next === 'gaze');
+  byId('stop-gaze').hidden = next !== 'gaze';
   if (next !== 'gaze') {
     if (previous === 'loading' || previous === 'gaze') stopCamera();
     if (dialog.open) dialog.close();
@@ -189,10 +222,10 @@ function setMode(next, notice) {
   byId('start').disabled = next === 'loading';
   byId('start').textContent = next === 'gaze' ? 'Recalibrate webcam' : 'Start webcam gaze';
   byId('status').textContent = notice ?? ({
-    click:'Click or keyboard mode. The camera is off.',
+    click:'Camera off. Enable eye gaze to play hands-free.',
     hover:'Mouse dwell mode. Move your pointer onto a tile and hold it there.',
     loading:'Starting the webcam…',
-    gaze:'Webcam gaze is on. Look at a tile until the bar fills.'
+    gaze:'Eye gaze is on. Hold your gaze on a word or action until its bar fills.'
   })[next];
 }
 function loadTracker() {
@@ -211,32 +244,54 @@ function showPoint() {
   const [x,y] = coords[dot];
   point.style.left = x + '%';
   point.style.top = y + '%';
+  point.style.setProperty('--sample', '0%');
   point.textContent = dot + 1;
-  point.setAttribute('aria-label', 'Calibration point ' + (dot + 1) + ' of 9');
-  point.disabled = !gazeReady;
-  byId('cal-status').textContent = gazeReady
-    ? 'Dot ' + (dot + 1) + ' of 9 · ' + samples + ' of 3 clicks'
-    : 'Waiting for the camera and eye detection…';
+  point.hidden = false;
+  dotShown = performance.now();
+  sampledAt = 0;
+  byId('cal-status').textContent = 'Calibration point ' + (dot + 1) + ' of ' + coords.length;
 }
-point.onclick = event => {
-  if (dot > 0 && performance.now() - lastGaze > 500) {
-    byId('cal-status').textContent = 'Eyes out of view. Face the camera and click this dot again.';
-    tracker.recordScreenPosition(event.clientX, event.clientY, 'click');
-    return;
-  }
+
+function samplePoint(now) {
+  if (now - dotShown < 600 || now - sampledAt < 150 || document.hidden) return;
   const rect = point.getBoundingClientRect();
   tracker.recordScreenPosition(rect.x + rect.width / 2, rect.y + rect.height / 2, 'click');
-  event.stopPropagation();
+  sampledAt = now;
   samples++;
-  if (samples === 3) { samples = 0; dot++; }
+  point.style.setProperty('--sample', (samples / 7 * 100) + '%');
+  if (samples < 7) return;
+  samples = 0;
+  dot++;
   if (dot < coords.length) { showPoint(); return; }
+  restorePrediction?.();
+  restorePrediction = null;
   dialog.close();
   setMode('gaze');
-  byId('start').focus();
-};
+  speechStatus.textContent = 'Try selecting a word with your eyes.';
+}
+
 function receiveGaze(prediction) {
+  if (document.hidden) return;
+  if (mode === 'loading') {
+    if (!gazeReady) return;
+    const now = performance.now();
+    if (!prediction?.eyeFeatures?.left || !prediction.eyeFeatures.right) {
+      if (now - lastEyes > 1800) byId('cal-status').textContent = 'Center your face in the camera and look at the dot.';
+      return;
+    }
+    if (now - lastEyes > 1800) {
+      byId('cal-status').textContent = 'Calibration point ' + (dot + 1) + ' of ' + coords.length;
+    }
+    lastEyes = now;
+    samplePoint(now);
+    return;
+  }
   if (!prediction || !Number.isFinite(prediction.x) || !Number.isFinite(prediction.y)) {
-    if (mode === 'gaze') { cursor.hidden = true; gazePosition = null; resetDwell(); }
+    if (mode === 'gaze' && performance.now() - lastGaze > 480) {
+      cursor.hidden = true;
+      gazePosition = null;
+      resetDwell();
+    }
     return;
   }
   lastGaze = performance.now();
@@ -259,15 +314,22 @@ byId('start').onclick = async () => {
     return;
   }
   if (mode === 'gaze') stopCamera();
+  if ('speechSynthesis' in window) {
+    speechSynthesis.cancel();
+    const prompt = new SpeechSynthesisUtterance('Follow the dot with your eyes.');
+    prompt.lang = 'en';
+    speechSynthesis.speak(prompt);
+  }
   setMode('loading');
   const current = session;
   starting = true;
   dot = samples = 0;
   gazeReady = false;
-  showPoint();
+  point.hidden = true;
+  byId('cal-status').textContent = 'Waiting for the camera…';
   dialog.showModal();
   const hint = setTimeout(() => {
-    if (current === session && !gazeReady) {
+    if (current === session && !samples && dot === 0) {
       byId('cal-status').textContent = 'Check camera permission and face the screen in good light. You can also switch to mouse dwell.';
     }
   }, 12000);
@@ -278,19 +340,29 @@ byId('start').onclick = async () => {
     await tracker.clearData();
     if (current !== session) return;
     tracker.showVideo(false).showFaceOverlay(false).showFaceFeedbackBox(false).showPredictionPoints(false);
+    const regression = tracker.getRegression()[0];
+    const predict = regression.predict;
+    // WebGazer's listener normally receives null until there are training samples.
+    // Allow frames with valid eyes to reach calibration before the model is trained.
+    regression.predict = function(eyes) {
+      return eyes?.left && eyes.right ? {x:0,y:0} : null;
+    };
+    restorePrediction = () => { regression.predict = predict; };
     tracker.setGazeListener(receiveGaze);
     await tracker.begin();
     if (current !== session && mode !== 'gaze') { stopCamera(); return; }
     tracker.removeMouseEventListeners();
     gazeReady = true;
+    lastEyes = performance.now();
     showPoint();
   } catch {
     if (current === session) setMode('hover', 'Webcam setup failed. Mouse dwell is on. You can retry webcam gaze.');
   } finally {
     starting = false;
-    if (gazeReady || current !== session) clearTimeout(hint);
+    if (current !== session) clearTimeout(hint);
   }
 };
+byId('stop-gaze').onclick = () => setMode('click');
 byId('hover').onclick = () => setMode('hover');
 byId('click').onclick = () => setMode('click');
 byId('leave').onclick = () => { setMode('hover'); byId('hover').focus(); };
