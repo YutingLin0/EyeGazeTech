@@ -120,7 +120,7 @@ byId('join-form').onsubmit = event => {
   joinOrHost(event.submitter,'/' + byId('code').value.trim().toUpperCase() + '/join',{nickname:byId('nickname').value});
 };
 byId('copy').onclick = async () => {
-  const url = new URL(location.origin);
+  const url = new URL('/match', location.origin);
   url.searchParams.set('join',member.code);
   try {
     await navigator.clipboard.writeText(url.href);
