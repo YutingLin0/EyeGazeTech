@@ -1,6 +1,6 @@
 # Eye Gaze Lab
 
-An English classroom game inspired by the Tobii Dynavox TD I-Series. Play ten communication rounds and compare final scores. Choose **Quick setup** or **Precision setup** to calibrate the webcam, or **Play with clicks** to use a mouse, touch, or keyboard. Camera processing stays in the browser.
+An English classroom game inspired by the Tobii Dynavox TD I-Series. Play ten communication rounds and compare final scores. Choose **Precision setup** to calibrate the webcam, or **Play with clicks** to use a mouse, touch, or keyboard. Camera processing stays in the browser.
 
 ## Build and run
 
@@ -8,4 +8,4 @@ Run `node worker/build.mjs` (Node.js 20+), then deploy `dist/server/index.js` as
 
 ## How gaze calibration works
 
-The homepage adapts the [OCULA source](https://github.com/revolutionarybukhari/ocula/tree/7b0d9495564161b37f114cec4205975549d34603), including its interface styling, Face Mesh iris tracking, five calibration targets, amber gaze ring, and adjustable dwell timings. Precision setup uses nine targets, collects longer samples, and reports the offset from two fresh targets. Recenter corrects a small shift with one center target. Its MIT notice is in `worker/simple.html`. The English classroom game in `worker/ocula-game.js` presents ten scenarios. The first correct choice earns 100 points, or 50 points if the player needed a retry. Scores on the homepage are local to the current round set. Click mode uses the same board and scoring.
+The homepage adapts the [OCULA source](https://github.com/revolutionarybukhari/ocula/tree/7b0d9495564161b37f114cec4205975549d34603), including its interface styling, Face Mesh iris tracking, camera calibration, amber gaze ring, and adjustable dwell timings. Precision setup uses nine targets, collects longer samples, and reports the offset from two fresh targets. Recenter corrects a small shift with one center target. Its MIT notice is in `worker/simple.html`. The English classroom game in `worker/ocula-game.js` presents ten scenarios. The first correct choice earns 100 points, or 50 points if the player needed a retry. Scores on the homepage are local to the current round set. Click mode uses the same board and scoring.

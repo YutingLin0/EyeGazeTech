@@ -682,7 +682,7 @@ SOFTWARE.
       </div>
       <div class="step">
         <div class="num">02</div>
-        <div class="body">Choose Quick for five dots or Precision for nine dots and an alignment check.</div>
+        <div class="body">Follow nine calibration dots, then look at two more dots to check alignment.</div>
       </div>
       <div class="step">
         <div class="num">03</div>
@@ -690,8 +690,7 @@ SOFTWARE.
       </div>
     </div>
     <div class="welcome-actions">
-      <button class="cta" id="begin-btn">Quick setup</button>
-      <button class="secondary-link" data-action="precision">Precision setup</button>
+      <button class="cta" id="begin-btn">Precision setup</button>
       <button class="secondary-link" data-action="mouse">Play with clicks</button>
     </div>
     <div class="credits"><a class="secondary-link" href="https://github.com/revolutionarybukhari/ocula">OCULA source</a></div>
@@ -718,7 +717,7 @@ SOFTWARE.
       </svg>
       <div class="dot"></div>
     </div>
-    <div class="calib-count">Point <span id="calib-num">1</span> of <span id="calib-total">5</span></div>
+    <div class="calib-count">Point <span id="calib-num">1</span> of <span id="calib-total">9</span></div>
     <button class="secondary-link cancel-calibration" data-action="mouse">Play with clicks instead</button>
   </div>
 
@@ -745,8 +744,7 @@ SOFTWARE.
         <span class="item camera-control" id="calib-result" role="status" hidden></span>
         <span class="item camera-control">Dwell <span class="v" id="dwell-display">0.8 s</span></span>
         <button class="gaze-clickable camera-control" data-action="dwell-cycle">Speed</button>
-        <button class="gaze-clickable" data-action="quick">Quick · 5 dots</button>
-        <button class="gaze-clickable" data-action="precision">Precision · 9 dots</button>
+        <button class="gaze-clickable" data-action="precision">Precision recalibrate</button>
         <button class="gaze-clickable camera-control" data-action="recenter">Recenter</button>
         <button class="gaze-clickable camera-control" data-action="mouse">Camera off</button>
       </div>
@@ -856,24 +854,21 @@ SOFTWARE.
       return { x: (g1.x + g2.x) / 2, y: (g1.y + g2.y) / 2 };
     }
 
-    // The quick setup retains OCULA’s five original calibration targets.
-    const QUICK_POINTS=[
-      {px:.10,py:.15},{px:.90,py:.15},{px:.50,py:.50},{px:.10,py:.85},{px:.90,py:.85}
-    ];
+    const CENTER_POINT={px:.50,py:.50};
     const PRECISION_POINTS=[
-      ...QUICK_POINTS,{px:.50,py:.15},{px:.10,py:.50},{px:.90,py:.50},{px:.50,py:.85}
+      {px:.10,py:.15},{px:.90,py:.15},CENTER_POINT,{px:.10,py:.85},{px:.90,py:.85},
+      {px:.50,py:.15},{px:.10,py:.50},{px:.90,py:.50},{px:.50,py:.85}
     ];
     const CHECK_POINTS=[{px:.32,py:.36},{px:.68,py:.64}];
     const calibrationResult=document.getElementById('calib-result');
     const calibrationTitle=document.getElementById('calib-title');
     const calibrationHelp=document.getElementById('calib-help');
-    let preferredCalibration='quick', calibrationPhase='quick', calibrationPoints=QUICK_POINTS;
+    let calibrationPhase='precision', calibrationPoints=PRECISION_POINTS;
     let calibIndex=0, calibSamples=[], calibPointStart=0, calibrationData=[];
     let gazeToScreenFn=null, screenOffset={x:0,y:0};
 
-    function startCalibration(method=preferredCalibration) {
+    function startCalibration(method='precision') {
       if (method!=='center') {
-        preferredCalibration=method;
         screenOffset={x:0,y:0};
       }
       resetCursor();
@@ -885,12 +880,12 @@ SOFTWARE.
     function setCalibrationPhase(phase) {
       calibrationPhase=phase;
       calibrationPoints=({
-        quick:QUICK_POINTS,precision:PRECISION_POINTS,check:CHECK_POINTS,center:[QUICK_POINTS[2]]
+        precision:PRECISION_POINTS,check:CHECK_POINTS,center:[CENTER_POINT]
       })[phase];
       calibrationData=[];
       calibIndex=0;
       calibrationTitle.textContent=({
-        quick:'Quick calibration',precision:'Precision calibration',check:'Alignment check',center:'Recenter gaze'
+        precision:'Precision calibration',check:'Alignment check',center:'Recenter gaze'
       })[phase];
       calibrationHelp.textContent=phase==='check'?'Look at each new dot until it fills':'Look at the marker until it fills';
       calibTotal.textContent=String(calibrationPoints.length);
@@ -922,7 +917,7 @@ SOFTWARE.
         if (now-lastFaceTime>500) resetSampleWindow(now);
         return;
       }
-      const precise=calibrationPhase==='precision' || calibrationPhase==='check';
+      const precise=calibrationPhase!=='center';
       const duration=precise?2100:1500, delay=precise?750:600, minimum=precise?8:5;
       const elapsed=now-calibPointStart;
       if (elapsed>delay && lastFaceTime!==lastSampleAt) {
@@ -1156,13 +1151,10 @@ SOFTWARE.
       const control=e.target.closest('[data-action]');
       if (!control) return;
       switch (control.dataset.action) {
-        case 'quick':
-        case 'precision': {
-          const method=control.dataset.action;
-          if (camera) startCalibration(method);
-          else start(method);
+        case 'precision':
+          if (camera) startCalibration();
+          else start();
           break;
-        }
         case 'recenter':
           if (camera && gazeToScreenFn) startCalibration('center');
           break;
@@ -1188,7 +1180,7 @@ SOFTWARE.
         prompt.lang='en-US';
         speechSynthesis.speak(prompt);
       } catch {}
-      start('quick');
+      start();
     });
     window.addEventListener('resize',()=>{
       if (camera && (appState==='tracking' || appState==='calibrate')) startCalibration();
@@ -1224,13 +1216,12 @@ SOFTWARE.
       errorMsg.textContent=message;
       setState('error');
     }
-    async function start(method=preferredCalibration) {
+    async function start() {
       if (appState==='loading') return;
       if (!navigator.mediaDevices?.getUserMedia || typeof FaceMesh==='undefined' || typeof Camera==='undefined') {
         showError('The eye tracker could not load in this browser. Retry or play with clicks.');
         return;
       }
-      preferredCalibration=method;
       stopCamera();
       const session=cameraGeneration;
       setState('loading');
