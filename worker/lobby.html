@@ -1,0 +1,19 @@
+<section class="panel match" aria-labelledby="match-title">
+<div class="match-head"><div><h2 id="match-title">Classroom match</h2><p id="match-info">Three timed rounds. Build the phrase and select Speak &amp; submit to score.</p></div><div id="timer" hidden aria-label="Seconds remaining"></div></div>
+<div id="join-controls" class="entry">
+<button class="primary" id="host">Host a game</button>
+<form id="join-form">
+<label>Room code<input id="code" required maxlength="6" minlength="6" autocomplete="off" autocapitalize="characters" pattern="[A-Za-z2-9]{6}"></label>
+<label>Nickname<input id="nickname" required maxlength="20" autocomplete="off"></label>
+<button>Join game</button>
+</form>
+</div>
+<div id="room-controls" class="mode" hidden>
+<button id="copy">Copy join link</button>
+<button class="primary" id="advance" hidden>Start match</button>
+<button id="end" hidden>End match</button>
+<button id="exit">Leave room</button>
+</div>
+<p id="match-status" class="status" role="status"></p>
+<ol id="ranks" aria-label="Leaderboard" hidden></ol>
+</section>
