@@ -1,12 +1,12 @@
 import {mkdir, readFile, writeFile} from 'node:fs/promises';
 const read = name => readFile(new URL(name, import.meta.url), 'utf8');
-const [html, api, lobby, game, simple, boardTracking] = await Promise.all(['index.html','api.mjs','lobby.html','game.js','simple.html','board-tracking.js'].map(read));
+const [html, api, lobby, game, simple, classActivity] = await Promise.all(['index.html','api.mjs','lobby.html','game.js','simple.html','ocula-game.js'].map(read));
 const page = html.replace('<!-- CLASSROOM LOBBY -->', () => lobby).replace('// CLASSROOM GAME', () => game);
 await mkdir(new URL('../dist/server/',import.meta.url), {recursive:true});
 await writeFile(new URL('../dist/server/index.js',import.meta.url), `
 ${api}
 const page = ${JSON.stringify(page)};
-const board = ${JSON.stringify(simple.replace('// BOARD TRACKING', () => boardTracking))};
+const board = ${JSON.stringify(simple.replace('// OCULA CLASS GAME', () => classActivity))};
 export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname;

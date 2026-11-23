@@ -1,6 +1,6 @@
 # Eye Gaze Lab
 
-A browser communication board inspired by the Tobii Dynavox TD I-Series. Open the homepage for three illustrated English communication missions, camera calibration and a three-tile tracking check. Open /match for the classroom game. The host creates a room, shares a join link, starts each round, and reveals the final scores. Players build the displayed phrase on a communication board and speak it aloud. Correct submissions earn 100 points plus up to 30 for time remaining.
+A browser communication board inspired by the Tobii Dynavox TD I-Series. Open the homepage for the OCULA-style English classroom game. Play six communication rounds and compare final scores. Open /match to host the separate room-based multiplayer game. The host creates a room, shares a join link, starts each round, and reveals the final scores. Players build the displayed phrase on a communication board and speak it aloud. Correct submissions earn 100 points plus up to 30 for time remaining.
 
 Webcam gaze, mouse dwell, and keyboard controls are available. For a comparable class challenge, agree on an input mode before starting and keep alternatives available for access needs. After joining, choose Enable eye gaze and allow camera access. Follow the calibration dot without clicking, then hold your gaze on words, Undo, Clear, or Speak & submit. Camera processing remains in the browser. The room service stores nicknames and scores.
 
@@ -12,4 +12,4 @@ The multiplayer API needs a server. A static GitHub Pages deployment alone canno
 
 ## How gaze calibration works
 
-The picture missions use the gaze extraction, affine screen mapping, five target positions, and smoothing approach from [OCULA](https://github.com/revolutionarybukhari/ocula/tree/7b0d9495564161b37f114cec4205975549d34603). See the MIT notice in `worker/board-tracking.js`. The board uses the same refined MediaPipe Face Mesh model as OCULA and verifies gaze with three tile selections before play. Camera frames and calibration stay in the current browser session. Use the Dwell button to change selection time or Recenter gaze to correct a small change in seating position.
+The homepage adapts the [OCULA source](https://github.com/revolutionarybukhari/ocula/tree/7b0d9495564161b37f114cec4205975549d34603), including its interface styling, Face Mesh iris tracking, five calibration targets, amber gaze ring, and adjustable dwell timings. Its MIT notice is in `worker/simple.html`. The English classroom game in `worker/ocula-game.js` presents six scenarios. The first correct choice earns 100 points, or 50 points if the player needed a retry. Scores on the homepage are local to the current round set. Click mode uses the same board and scoring.
