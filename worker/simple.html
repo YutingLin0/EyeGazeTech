@@ -11,13 +11,14 @@ header{display:flex;gap:.7rem;align-items:center;justify-content:space-between;f
 h1{font-size:clamp(1.55rem,4vw,2.35rem);margin:0;letter-spacing:-.055em}a{color:#18545b}
 button{font:inherit;color:inherit;cursor:pointer;font-weight:700;background:white;border:1px solid var(--line);border-radius:.7rem;padding:.43rem .75rem}
 button:focus-visible,a:focus-visible{outline:3px solid #ab4500;outline-offset:3px}button:disabled{cursor:default;opacity:.6}.primary{background:var(--accent);border-color:var(--accent);color:white}
-.toolbar{display:flex;gap:.45rem;flex-wrap:wrap;margin-bottom:.4rem}.status{height:2.9em;color:#365362;margin:.25rem 0 .5rem}.message{height:3rem;padding:.45rem .75rem;background:white;border:1px solid var(--line);border-radius:.7rem;font-size:1.2rem;font-weight:700;overflow:auto;margin:0 0 .65rem}.message:empty::before{content:'Your message appears here';font-weight:400;color:#48616c}
+.camera{position:fixed;width:1px;height:1px;opacity:0;pointer-events:none}.toolbar{min-height:5.2rem;align-content:start;display:flex;gap:.45rem;flex-wrap:wrap;margin-bottom:.4rem}.status{height:2.9em;color:#365362;margin:.25rem 0 .5rem}.message{height:3rem;padding:.45rem .75rem;background:white;border:1px solid var(--line);border-radius:.7rem;font-size:1.2rem;font-weight:700;overflow:auto;margin:0 0 .65rem}.message:empty::before{content:'Your message appears here';font-weight:400;color:#48616c}
 #board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(.45rem,1.5vw,.85rem);position:relative}
 .tile{min-width:0;min-height:clamp(3.5rem,13dvh,6.2rem);font-size:clamp(1rem,3vw,1.6rem);position:relative;overflow:hidden;background:#fff}
 .tile.action{min-height:clamp(2.85rem,9dvh,4.6rem);font-size:clamp(.92rem,2.8vw,1.25rem);background:#dfeaed}.tile.primary{background:var(--accent)}.tile.ready{outline:3px solid #0f8e7b;outline-offset:1px;background:#d9f2eb;color:#103e38}
 .tile::after{content:'';position:absolute;left:0;bottom:0;width:var(--fill,0%);height:7px;background:#1db095}.tile.check{border:3px solid #a7480c;background:#ffe8d0;color:#543015}
 #dot{position:fixed;pointer-events:none;z-index:5;display:grid;place-items:center;width:2.65rem;height:2.65rem;transform:translate(-50%,-50%);background:conic-gradient(#20a68f var(--fill,0%),#fff 0);border:3px solid #075d54;border-radius:50%;font-weight:800}
 #board.calibrating .tile{color:transparent;background:#e5ecee}.tile.check:disabled{opacity:1}.tip{margin:.65rem 0 0;color:#365362;font-size:.9rem}
+@media(min-width:460px){.toolbar{min-height:2.15rem}}
 @media(max-height:560px){.wrap{padding-top:.3rem}.tile{min-height:2.55rem}.tile.action{min-height:2.25rem}.status{height:2.9em}.message{height:2.25rem;padding:.2rem .6rem}.tip{margin-top:.3rem}}
 </style>
 </head>
@@ -27,6 +28,7 @@ button:focus-visible,a:focus-visible{outline:3px solid #ab4500;outline-offset:3p
 <div class="toolbar">
 <button class="primary" id="enable">Start eye gaze</button>
 <button id="retry" hidden>Recalibrate</button>
+<button id="recenter" hidden>Recenter gaze</button>
 <button id="stop" hidden>Turn camera off</button>
 </div>
 <p class="status" id="status" role="status">Try “I want water.” Click a tile, or start eye gaze to select it with your eyes.</p>
@@ -39,22 +41,26 @@ button:focus-visible,a:focus-visible{outline:3px solid #ab4500;outline-offset:3p
 <button class="tile action" data-action="clear">Clear</button>
 </div>
 <p class="tip">Sit facing your screen in even light. During setup, keep your head still and follow the dot with your eyes.</p>
+<video id="camera" muted playsinline aria-hidden="true" class="camera"></video>
 <div id="dot" hidden aria-hidden="true"></div>
 </main>
 <script>
+// BOARD TRACKING
 const get = id => document.getElementById(id);
 const board = get('board');
 const tiles = Array.from(board.querySelectorAll('button'));
 const status = get('status');
 const dot = get('dot');
+const video = get('camera');
 const words = [];
-const order = [4,0,2,6,8,1,3,5,7];
-const checks = [2,3,7];
-const stay = 1050;
-let mode = 'off', tracker, library, restore, generation = 0, starting = false;
-let step = 0, shownAt = 0, sampleAt = 0, samples = 0, focus, entered = 0, fired = false;
-let filtered, lastFrame = 0, lastEyes = 0, checkDeadline = 0, lastSeen = 0, geometry = [];
-let outsideSince = 0;
+const calibrationOrder = [4,0,2,6,8,1,3,5,7];
+const checks = [2,6,4];
+const dwellMs = 1150;
+let mode = 'off', camera, detector, generation = 0, animation, deadline;
+let lastVideo = -1, lastOpen = 0, lastDraw = 0;
+let step, windowSamples, elapsed, anchors, map, baseline, offset, filtered;
+let focused = null, candidate = null, candidateMs = 0, heldMs = 0, locked = null;
+let checkMs = 0, boardBox, tileBoxes;
 
 function setStatus(text) {
   if (status.textContent !== text) status.textContent = text;
@@ -67,7 +73,7 @@ function say(text) {
   speechSynthesis.speak(speech);
 }
 function select(tile) {
-  if (mode === 'starting' || mode === 'calibrate' || mode === 'check') return;
+  if (!['off','failed','play'].includes(mode)) return;
   switch (tile.dataset.action) {
     case 'undo': words.pop(); break;
     case 'clear': words.length = 0; break;
@@ -80,230 +86,241 @@ function select(tile) {
 }
 for (const tile of tiles) tile.onclick = () => select(tile);
 
-function center(rect) {
-  return {x:rect.left+rect.width/2,y:rect.top+rect.height/2};
-}
 function resetDwell() {
-  if (focus) {
-    focus.classList.remove('ready');
-    focus.style.removeProperty('--fill');
-  }
-  focus = null;
-  outsideSince = 0;
-  fired = false;
+  focused?.classList.remove('ready');
+  focused?.style.removeProperty('--fill');
+  focused = candidate = null;
+  candidateMs = heldMs = 0;
 }
-function setMode(next) {
+function setMode(next, text) {
   mode = next;
   resetDwell();
-  filtered = null;
-  lastFrame = 0;
-  board.classList.toggle('calibrating', next === 'calibrate');
-  dot.hidden = next !== 'calibrate';
+  filtered = locked = null;
+  const sampling = next === 'calibrate' || next === 'center';
+  board.classList.toggle('calibrating', sampling);
+  dot.hidden = !sampling;
   get('enable').hidden = next !== 'off';
   get('retry').hidden = !['failed','check','play'].includes(next);
+  get('recenter').hidden = next !== 'play';
   get('stop').hidden = next === 'off';
   for (const tile of tiles) {
     tile.classList.remove('check');
-    tile.disabled = ['starting','calibrate','check'].includes(next);
+    tile.disabled = ['starting','calibrate','center','check'].includes(next);
   }
+  if (text) setStatus(text);
 }
-function closeTracker() {
-  restore?.();
-  restore = null;
-  const video = document.querySelector('#webgazerVideoFeed');
-  video?.srcObject?.getTracks().forEach(track => track.stop());
-  try { tracker?.removeMouseEventListeners(); tracker?.end(); } catch {}
+function releaseCamera() {
+  clearTimeout(deadline);
+  cancelAnimationFrame(animation);
+  camera?.getTracks().forEach(track => track.stop());
+  camera = null;
+  video.srcObject = null;
+  detector?.close();
+  detector = null;
 }
-function stop(message) {
+function stop(next, text) {
   generation++;
-  closeTracker();
-  setMode('off');
-  setStatus(message ?? 'Camera off. You can select tiles by clicking or tapping.');
+  releaseCamera();
+  setMode(next,text);
 }
-function loadTracker() {
-  if (!library) {
-    library = new Promise((resolve,reject) => {
-      const script = document.createElement('script');
-      script.src = 'https://webgazer.cs.brown.edu/webgazer.js';
-      script.onload = () => window.webgazer ? resolve(window.webgazer) : reject(new Error('Tracker unavailable'));
-      script.onerror = () => reject(new Error('Tracker unavailable'));
-      document.head.append(script);
-    }).catch(error => {library = null; throw error;});
-  }
-  return library;
+function measure() {
+  boardBox = board.getBoundingClientRect();
+  tileBoxes = tiles.map(tile => tile.getBoundingClientRect());
 }
-function markDot() {
-  const p = center(geometry[order[step]]);
-  dot.style.left = p.x + 'px';
-  dot.style.top = p.y + 'px';
+function centerOf(rect) {
+  return {x:rect.left+rect.width/2, y:rect.top+rect.height/2};
+}
+function markDot(index) {
+  measure();
+  const center = centerOf(tileBoxes[index]);
+  dot.style.left = center.x + 'px';
+  dot.style.top = center.y + 'px';
   dot.style.setProperty('--fill','0%');
-  dot.textContent = step + 1;
-  shownAt = performance.now();
-  sampleAt = 0;
-  samples = 0;
-  setStatus('Look at dot ' + (step+1) + ' of ' + order.length + ' until the ring fills.');
+  dot.textContent = mode === 'center' ? '•' : step+1;
+  elapsed = 0;
+  windowSamples = [];
+  lastOpen = 0;
+  setStatus(mode === 'center' ? 'Look at the center dot to correct drift.' :
+    'Look at dot ' + (step+1) + ' of ' + calibrationOrder.length + ' until the ring fills.');
 }
-function promptCheck(now) {
+function beginCalibration() {
+  setMode('calibrate');
+  step = 0;
+  anchors = [];
+  offset = {x:0,y:0};
+  markDot(calibrationOrder[step]);
+}
+function promptCheck() {
   tiles.forEach(tile => tile.classList.remove('check'));
   tiles[checks[step]].classList.add('check');
-  checkDeadline = now + 11500;
+  checkMs = 0;
   resetDwell();
-  setStatus('Tracking check ' + (step+1) + ' of ' + checks.length + '. Look at the orange tile until it fills.');
+  setStatus('Tracking check ' + (step+1) + ' of ' + checks.length + '. Hold your gaze on the orange tile.');
 }
-function collect(now) {
-  if (now - shownAt < 600 || now - sampleAt < 165) return;
-  const p = center(geometry[order[step]]);
-  tracker.recordScreenPosition(p.x,p.y,'click');
-  sampleAt = now;
-  dot.style.setProperty('--fill', (++samples / 8 * 100) + '%');
-  if (samples < 8) return;
-  step++;
-  if (step < order.length) {
-    markDot();
-    return;
-  }
-  restore?.();
-  restore = null;
+function beginCheck() {
   setMode('check');
   step = 0;
-  promptCheck(now);
+  measure();
+  promptCheck();
 }
-function closestTile(point) {
-  let best = null, bestDistance = Infinity;
-  // Small gaps extend the hit area without snapping from another part of the screen.
-  for (const [index, rect] of geometry.entries()) {
-    const margin = 10;
-    if (point.x < rect.left-margin || point.x > rect.right+margin ||
-        point.y < rect.top-margin || point.y > rect.bottom+margin) continue;
-    const p = center(rect);
-    const distance = Math.hypot((point.x-p.x)/rect.width, (point.y-p.y)/rect.height);
-    if (distance < bestDistance) {
-      best = tiles[index];
-      bestDistance = distance;
-    }
+function sample(signal, dt) {
+  elapsed += dt;
+  if (elapsed < 550) return;
+  windowSamples.push(signal);
+  dot.style.setProperty('--fill', Math.min(1,(elapsed-550)/820,windowSamples.length/10)*100+'%');
+  if (elapsed < 1370 || windowSamples.length < 10) return;
+  const point = medianPoint(windowSamples);
+  if (mode === 'center') {
+    offset = {x:point.x-baseline.x,y:point.y-baseline.y};
+    beginCheck();
+    return;
   }
-  return best;
+  const target = centerOf(tileBoxes[calibrationOrder[step]]);
+  anchors.push({...point,u:(target.x-boardBox.left)/boardBox.width,v:(target.y-boardBox.top)/boardBox.height});
+  step++;
+  if (step < calibrationOrder.length) {markDot(calibrationOrder[step]); return;}
+  map = fitCalibration(anchors);
+  if (!map) {
+    stop('failed','Calibration could not distinguish the targets. Face the screen in good light and select Recalibrate.');
+    return;
+  }
+  baseline = anchors[0];
+  beginCheck();
 }
-function receive(prediction) {
-  if (document.hidden) return;
-  const now = performance.now();
-  lastFrame = now;
-  if (mode === 'calibrate') {
-    if (!prediction?.eyeFeatures?.left || !prediction.eyeFeatures.right) {
-      if (now-lastEyes > 1500) setStatus('Eyes out of view. Face the camera and look at the dot.');
+function hitTest(point) {
+  const usable = (rect, padding) => point.x>=rect.left-padding && point.x<=rect.right+padding &&
+    point.y>=rect.top-padding && point.y<=rect.bottom+padding;
+  const exact = tileBoxes.findIndex(rect => usable(rect,0));
+  if (exact >= 0) return tiles[exact];
+  let nearest = null, best = Infinity;
+  tileBoxes.forEach((rect,i) => {
+    if (!usable(rect,Math.min(14,rect.height*.16))) return;
+    const center = centerOf(rect);
+    const distance = Math.hypot((point.x-center.x)/rect.width,(point.y-center.y)/rect.height);
+    if (distance<best) {best=distance; nearest=tiles[i];}
+  });
+  return nearest;
+}
+function updateSelection(signal, dt) {
+  const mapped = map({x:signal.x-offset.x,y:signal.y-offset.y});
+  const point = {x:boardBox.left+mapped.x*boardBox.width,y:boardBox.top+mapped.y*boardBox.height};
+  const previous = filtered ?? point;
+  const weight = Math.hypot(point.x-previous.x,point.y-previous.y)>70 ? .66 : .36;
+  filtered = {x:previous.x+(point.x-previous.x)*weight,y:previous.y+(point.y-previous.y)*weight};
+  const target = hitTest(filtered);
+  if (target !== candidate) {
+    candidate = target;
+    candidateMs = 0;
+  }
+  candidateMs += dt;
+  if (candidate !== focused && candidateMs >= 115) {
+    focused?.classList.remove('ready');
+    focused?.style.removeProperty('--fill');
+    if (candidate !== locked) locked = null;
+    focused = candidate;
+    heldMs = 0;
+    focused?.classList.add('ready');
+  }
+  if (!focused || candidate !== focused || locked === focused ||
+      (mode === 'check' && focused !== tiles[checks[step]])) return;
+  heldMs += dt;
+  focused.style.setProperty('--fill', Math.min(1,heldMs/dwellMs)*100+'%');
+  if (heldMs < dwellMs) return;
+  locked = focused;
+  if (mode === 'play') {select(focused); return;}
+  step++;
+  if (step < checks.length) {promptCheck(); return;}
+  setMode('play','Tracking check passed. Hold your gaze on a tile until its bar fills.');
+}
+function receive(signal, now) {
+  const sampling = mode === 'calibrate' || mode === 'center';
+  const needsFaceMessage = now-lastOpen > 1500;
+  if (!signal || signal.blink) {
+    if (now-lastOpen > 380) {resetDwell(); filtered = null;}
+    if (!signal && needsFaceMessage) setStatus('Face out of view. Center your face in the camera and look at the board.');
+    // Never credit the elapsed time across a blink or missing face.
+    lastDraw = 0;
+    return;
+  }
+  if (needsFaceMessage) {
+    if (sampling) setStatus('Hold your gaze on the dot until the ring fills.');
+    if (mode === 'check') setStatus('Tracking check ' + (step+1) + ' of ' + checks.length + '. Hold your gaze on the orange tile.');
+    if (mode === 'play') setStatus('Hold your gaze on a tile until its bar fills.');
+  }
+  const dt = lastDraw ? Math.min(80,now-lastDraw) : 0;
+  lastOpen = lastDraw = now;
+  if (sampling) {sample(signal,dt); return;}
+  if (mode === 'check') {
+    checkMs += dt;
+    if (checkMs > 9500) {
+      stop('failed','The gaze missed a check tile. Sit square to the screen and select Recalibrate, or click the tiles.');
       return;
     }
-    if (now-lastEyes > 1500) setStatus('Look at dot ' + (step+1) + ' of ' + order.length + ' until the ring fills.');
-    lastEyes = now;
-    collect(now);
-    return;
   }
-  if (mode !== 'check' && mode !== 'play') return;
-  if (!Number.isFinite(prediction?.x) || !Number.isFinite(prediction?.y)) {
-    if (now-lastSeen > 380) {resetDwell(); filtered = null;}
-    return;
-  }
-  if (lastSeen && now-lastSeen > 460) {resetDwell(); filtered = null;}
-  lastSeen = now;
-  const old = filtered ?? prediction;
-  filtered = {x:old.x*.55+prediction.x*.45, y:old.y*.55+prediction.y*.45};
-  const target = closestTile(filtered);
-  if (target !== focus && focus) {
-    outsideSince ||= now;
-    if (now-outsideSince < 125) return;
-  }
-  if (target !== focus) {
-    resetDwell();
-    if (target && (mode === 'play' || target === tiles[checks[step]])) {
-      focus = target;
-      entered = now;
-      focus.classList.add('ready');
-    }
-  } else outsideSince = 0;
-  if (!focus || fired) return;
-  const progress = Math.min(1,(now-entered)/stay);
-  focus.style.setProperty('--fill',progress*100+'%');
-  if (progress < 1) return;
-  fired = true;
-  if (mode === 'play') {select(focus); return;}
-  step++;
-  if (step < checks.length) {promptCheck(now); return;}
-  setMode('play');
-  setStatus('Tracking check passed. Look at a tile until its bar fills. Look away before selecting it again.');
+  if (mode === 'check' || mode === 'play') updateSelection(signal,dt);
 }
-function updateGeometry() {
-  geometry = tiles.map(tile => tile.getBoundingClientRect());
+function runFrames(session) {
+  function frame(now) {
+    if (session !== generation) return;
+    try {
+      if (!document.hidden && video.readyState >= 2 && video.currentTime !== lastVideo) {
+        lastVideo = video.currentTime;
+        receive(attention(detector.detectForVideo(video,now)),now);
+      }
+      if (session === generation) animation = requestAnimationFrame(frame);
+    } catch {
+      stop('failed','Tracking stopped. Recalibrate to restart the camera.');
+    }
+  }
+  animation = requestAnimationFrame(frame);
 }
 async function start() {
-  if (starting) return;
   if (!navigator.mediaDevices?.getUserMedia) {
-    stop('Camera access is unavailable in this browser. You can still click the tiles.');
+    setStatus('Camera access is unavailable here. Open the board in a browser, or click the tiles.');
     return;
   }
   say('Follow the dot with your eyes.');
-  closeTracker();
-  setMode('starting');
-  setStatus('Allow camera access to begin.');
-  const current = ++generation;
-  starting = true;
-  let timeout;
+  releaseCamera();
+  const session = ++generation;
+  setMode('starting','Allow camera access to begin.');
+  deadline = setTimeout(() => {
+    if (session === generation) stop('failed','Camera setup timed out. Check the browser permission and select Recalibrate.');
+  },25000);
   try {
-    const setup = async () => {
-      tracker = await loadTracker();
-      if (current !== generation) return;
-      tracker.saveDataAcrossSessions(false);
-      await tracker.clearData();
-      if (current !== generation) return;
-      tracker.showVideo(false).showFaceOverlay(false).showFaceFeedbackBox(false).showPredictionPoints(false);
-      const reg = tracker.getRegression()[0];
-      const predict = reg.predict;
-      // Forward eye detections before there are enough samples for a prediction.
-      reg.predict = eyes => eyes?.left && eyes.right ? {x:0,y:0} : null;
-      restore = () => {reg.predict = predict;};
-      tracker.setGazeListener(receive);
-      await tracker.begin();
-      if (current !== generation) {closeTracker(); return;}
-      tracker.removeMouseEventListeners();
-      step = 0;
-      lastEyes = performance.now();
-      setMode('calibrate');
-      updateGeometry();
-      markDot();
-    };
-    const limit = new Promise((_,reject) => {timeout = setTimeout(reject,25000);});
-    await Promise.race([setup(),limit]);
-  } catch {
-    if (current === generation) stop('Camera setup did not finish. Check camera permission and try again.');
-  } finally {
-    starting = false;
-    clearTimeout(timeout);
+    const stream = await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:'user',width:{ideal:640},height:{ideal:480}}});
+    if (session !== generation) {stream.getTracks().forEach(track=>track.stop()); return;}
+    camera = stream;
+    video.srcObject = stream;
+    setStatus('Loading the eye tracker…');
+    await video.play();
+    if (session !== generation) return;
+    const model = await createFaceTracker();
+    if (session !== generation) {model.close(); return;}
+    detector = model;
+    clearTimeout(deadline);
+    lastVideo = -1;
+    lastDraw = 0;
+    beginCalibration();
+    runFrames(session);
+  } catch (error) {
+    if (session !== generation) return;
+    stop('failed',error.name === 'NotAllowedError' ? 'Camera access was blocked. Allow it in your browser or click the tiles.' :
+      'Eye tracking could not start. Select Recalibrate to retry, or click the tiles.');
   }
 }
 get('enable').onclick = start;
-get('retry').onclick = start;
-get('stop').onclick = () => stop();
-function handleLayout() {
-  if (mode === 'calibrate' || mode === 'check' || mode === 'play') {
-    updateGeometry();
-    if (mode === 'calibrate') markDot();
-    resetDwell();
-    filtered = null;
-  }
+get('retry').onclick = () => detector ? beginCalibration() : start();
+get('recenter').onclick = () => {setMode('center'); markDot(4);};
+get('stop').onclick = () => stop('off','Camera off. Click a tile, or start eye gaze again.');
+function layoutChanged() {
+  if (!camera || !detector) return;
+  if (mode === 'calibrate' || mode === 'center') markDot(mode === 'center' ? 4 : calibrationOrder[step]);
+  else {measure(); resetDwell(); filtered = null;}
 }
-window.addEventListener('resize',handleLayout);
-document.addEventListener('scroll',handleLayout,{passive:true});
-document.addEventListener('visibilitychange',() => {resetDwell(); filtered = null;});
-window.addEventListener('pagehide',() => {if (mode !== 'off') stop();});
-setInterval(() => {
-  if (document.hidden) return;
-  const now = performance.now();
-  if (mode === 'check' && now > checkDeadline) {
-    closeTracker();
-    setMode('failed');
-    setStatus('Tracking check missed a tile. Sit square to the screen, then select Recalibrate. You can still click the tiles.');
-  }
-  if (lastFrame && now-lastFrame > 500) {resetDwell(); filtered = null;}
-},200);
+window.addEventListener('resize',layoutChanged);
+document.addEventListener('scroll',layoutChanged,{passive:true});
+document.addEventListener('visibilitychange',() => {resetDwell(); filtered = null; lastDraw = 0;});
+window.addEventListener('pagehide',() => {if (mode !== 'off') stop('off','Camera off.');});
 </script>
 </body>
 </html>
