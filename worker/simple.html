@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Eye Gaze Lab · Communication Board</title>
+<title>Eye Gaze Lab · Picture Missions</title>
 <style>
 :root{font:100%/1.45 system-ui,sans-serif;background:#eef3f5;color:#172e3c;--accent:#07665b;--line:#b7c9cf}
 *{box-sizing:border-box}[hidden]{display:none!important}body{margin:0}.wrap{width:min(100% - 1.5rem,57rem);margin:auto;padding:.85rem 0 1.25rem}
@@ -20,6 +20,22 @@ button:focus-visible,a:focus-visible{outline:3px solid #ab4500;outline-offset:3p
 #board.calibrating .tile{color:transparent;background:#e5ecee}.tile.check:disabled{opacity:1}.tip{margin:.65rem 0 0;color:#365362;font-size:.9rem}
 @media(min-width:460px){.toolbar{min-height:2.15rem}}
 @media(max-height:560px){.wrap{padding-top:.3rem}.tile{min-height:2.55rem}.tile.action{min-height:2.25rem}.status{height:2.9em}.message{height:2.25rem;padding:.2rem .6rem}.tip{margin-top:.3rem}}
+
+body{background:#eef4f1}.wrap{width:min(100% - 1.5rem,54rem)}
+.mission{background:#123b35;color:#fff;border-radius:1rem;display:grid;grid-template-columns:3.25rem 1fr;column-gap:.9rem;align-items:center;height:6rem;padding:.55rem 1rem;margin:0 0 .55rem}
+.mission-visual{display:grid;place-items:center;border-radius:.75rem;background:#28584d;width:3.15rem;height:3.15rem;font-size:1.75rem}
+.mission h2{font-size:clamp(1rem,3.7vw,1.3rem);margin:0;font-weight:800}
+.mission p{margin:0;font-size:clamp(.8rem,3.1vw,.98rem);color:#d7e9e1}
+.mission .mission-count{font-size:.8rem;font-weight:750;color:#abe1c3;letter-spacing:.03em}
+.tile.word{display:grid;place-content:center;justify-items:center;gap:.08rem;min-height:clamp(3.65rem,12dvh,6.35rem)}
+.tile-picture{font-size:clamp(1.3rem,4vh,2.05rem);line-height:1.15}.tile-label{line-height:1.2}
+.tile.action{height:clamp(2.85rem,9dvh,4.6rem);padding-inline:.35rem}
+.tile.word:nth-child(3n+1){background:#fdf9e9}.tile.word:nth-child(3n+2){background:#e8f4fd}.tile.word:nth-child(3n){background:#f7eefb}
+.tile.word.ready{background:#d9f2eb}.tile.word.check{background:#ffe8d0}
+#board.calibrating .tile .tile-picture,#board.calibrating .tile .tile-label{visibility:hidden}
+.game-feedback{min-height:1.5rem;margin:.45rem 0 0;color:#215b48;font-size:.92rem;font-weight:750}
+@media(max-width:390px){.mission{height:6.45rem}}
+@media(max-height:650px){.mission{height:5.15rem;margin-bottom:.4rem}.mission-visual{width:2.65rem;height:2.65rem;font-size:1.4rem}.tile.word{min-height:3.3rem}.tile-picture{font-size:1.2rem}.status{margin:.15rem 0;height:2.9em}}
 </style>
 </head>
 <body>
@@ -31,16 +47,25 @@ button:focus-visible,a:focus-visible{outline:3px solid #ab4500;outline-offset:3p
 <button id="recenter" hidden>Recenter gaze</button>
 <button id="stop" hidden>Turn camera off</button>
 </div>
-<p class="status" id="status" role="status">Try “I want water.” Click a tile, or start eye gaze to select it with your eyes.</p>
+<p class="status" id="status" role="status">Start eye gaze, or click the pictures to play.</p>
+<section class="mission" aria-label="Current mission">
+<div id="scene-icon" class="mission-visual" aria-hidden="true">🏀</div>
+<div><p id="mission-count" class="mission-count">Mission 1 of 3</p><h2 id="scene-title">After recess</h2><p id="scene-clue">You’re thirsty after playing. Ask your partner for water.</p></div>
+</section>
 <div class="message" id="message" aria-label="Your message" aria-live="polite"></div>
 <div id="board" aria-label="Communication board">
-<button class="tile">I</button><button class="tile">want</button><button class="tile">water</button>
-<button class="tile">need</button><button class="tile">help</button><button class="tile">please</button>
+<button class="tile word" data-word="I"><span class="tile-picture" aria-hidden="true">🙋</span><span class="tile-label">I</span></button>
+<button class="tile word" data-word="want"><span class="tile-picture" aria-hidden="true">🤲</span><span class="tile-label">want</span></button>
+<button class="tile word" data-word="water"><span class="tile-picture" aria-hidden="true">💧</span><span class="tile-label">water</span></button>
+<button class="tile word" data-word="need"><span class="tile-picture" aria-hidden="true">❗</span><span class="tile-label">need</span></button>
+<button class="tile word" data-word="help"><span class="tile-picture" aria-hidden="true">🤝</span><span class="tile-label">help</span></button>
+<button class="tile word" data-word="please"><span class="tile-picture" aria-hidden="true">🙏</span><span class="tile-label">please</span></button>
 <button class="tile action" data-action="undo">Undo</button>
 <button class="tile action primary" data-action="speak">Speak</button>
 <button class="tile action" data-action="clear">Clear</button>
 </div>
-<p class="tip">Sit facing your screen in even light. During setup, keep your head still and follow the dot with your eyes.</p>
+<p class="game-feedback" id="game-feedback" role="status"></p>
+<p class="tip">Play in pairs. One person sends the message and the other listens without reading it. Switch roles after all three missions.</p>
 <video id="camera" muted playsinline aria-hidden="true" class="camera"></video>
 <div id="dot" hidden aria-hidden="true"></div>
 </main>
@@ -55,10 +80,20 @@ const video = get('camera');
 const words = [];
 const calibrationOrder = [4,0,2,6,8,1,3,5,7];
 const checks = [2,6,4];
+const missions = [
+  {icon:'🏀', title:'After recess', clue:'You’re thirsty after playing. Ask your partner for water.',
+    answers:['I want water','I need water','I want water please','water please']},
+  {icon:'🎒', title:'Stuck zipper', clue:'Your backpack won’t open. Ask your partner for help.',
+    answers:['I need help','I want help','I need help please','help please']},
+  {icon:'🧩', title:'One more minute', clue:'You’re still working on a puzzle. Ask for more time.',
+    answers:['I need more time','I want more time','more time']}
+];
+const wordPictures={water:'💧',more:'➕',please:'🙏',time:'⏱️'};
+let missionIndex=0, delivered=false;
 const dwellMs = 1150;
 let mode = 'off', camera, detector, generation = 0, animation, deadline;
 let lastVideo = -1, lastOpen = 0, lastDraw = 0;
-let step, windowSamples, elapsed, anchors, map, baseline, offset, filtered;
+let step, windowSamples, elapsed, anchors, map, baseline, recenterPoint, filtered;
 let focused = null, candidate = null, candidateMs = 0, heldMs = 0, locked = null;
 let checkMs = 0, boardBox, tileBoxes;
 
@@ -72,17 +107,58 @@ function say(text) {
   speech.lang = 'en-US';
   speechSynthesis.speak(speech);
 }
+function updateMission() {
+  const mission=missions[missionIndex];
+  const extraTime=missionIndex===2;
+  const updates=[[tiles[2],extraTime?'more':'water'],[tiles[5],extraTime?'time':'please']];
+  for (const [tile,word] of updates) {
+    tile.dataset.word=word;
+    tile.querySelector('.tile-label').textContent=word;
+    tile.querySelector('.tile-picture').textContent=wordPictures[word];
+  }
+  get('scene-icon').textContent=mission.icon;
+  get('scene-title').textContent=mission.title;
+  get('scene-clue').textContent=mission.clue;
+  get('mission-count').textContent='Mission '+(missionIndex+1)+' of '+missions.length;
+  tiles[7].textContent='Speak';
+  get('game-feedback').textContent='';
+  words.length=0;
+  get('message').textContent='';
+}
+function submitMessage() {
+  if (delivered) {
+    missionIndex=(missionIndex+1)%missions.length;
+    delivered=false;
+    updateMission();
+    return;
+  }
+  const message=words.join(' ');
+  if (!message) {
+    get('game-feedback').textContent='Select pictures to build a request first.';
+    return;
+  }
+  say(message);
+  delivered=missions[missionIndex].answers.includes(message);
+  if (!delivered) {
+    get('game-feedback').textContent='Try a different request. Use Undo or Clear to edit it.';
+    return;
+  }
+  const finished=missionIndex+1===missions.length;
+  tiles[7].textContent=finished?'Play again':'Next mission';
+  get('game-feedback').textContent=finished?'All three messages delivered! Switch roles and play again.' :
+    'Message delivered! Select Next mission when ready.';
+}
 function select(tile) {
   if (!['off','failed','play'].includes(mode)) return;
+  if (tile.dataset.action==='speak') {submitMessage(); return;}
+  if (delivered) return;
   switch (tile.dataset.action) {
     case 'undo': words.pop(); break;
     case 'clear': words.length = 0; break;
-    case 'speak':
-      if (words.length) say(words.join(' '));
-      return;
-    default: if (words.length < 24) words.push(tile.textContent.trim());
+    default: if (words.length < 8) words.push(tile.dataset.word || tile.textContent.trim());
   }
-  get('message').textContent = words.join(' ');
+  get('game-feedback').textContent='';
+  get('message').textContent=words.join(' ');
 }
 for (const tile of tiles) tile.onclick = () => select(tile);
 
@@ -147,7 +223,7 @@ function beginCalibration() {
   setMode('calibrate');
   step = 0;
   anchors = [];
-  offset = {x:0,y:0};
+  recenterPoint = null;
   markDot(calibrationOrder[step]);
 }
 function promptCheck() {
@@ -165,13 +241,22 @@ function beginCheck() {
 }
 function sample(signal, dt) {
   elapsed += dt;
-  if (elapsed < 550) return;
-  windowSamples.push(signal);
-  dot.style.setProperty('--fill', Math.min(1,(elapsed-550)/820,windowSamples.length/10)*100+'%');
-  if (elapsed < 1370 || windowSamples.length < 10) return;
-  const point = medianPoint(windowSamples);
+  if (elapsed < 650) return;
+  windowSamples.push({signal,at:elapsed});
+  while (elapsed-windowSamples[0].at > 1100) windowSamples.shift();
+  const signals=windowSamples.map(frame=>frame.signal);
+  const spread=windowSamples.at(-1).at-windowSamples[0].at;
+  const progress=Math.min(1,spread/850,signals.length/12);
+  dot.style.setProperty('--fill',progress*100+'%');
+  if (progress<1) return;
+  const point=medianPoint(signals);
+  const errors=signals.map(sample=>Math.hypot(sample.x-point.x,sample.y-point.y));
+  if (median(errors)>.04) {
+    setStatus('Hold your head steady and keep looking at the dot.');
+    return;
+  }
   if (mode === 'center') {
-    offset = {x:point.x-baseline.x,y:point.y-baseline.y};
+    recenterPoint = point;
     beginCheck();
     return;
   }
@@ -202,7 +287,12 @@ function hitTest(point) {
   return nearest;
 }
 function updateSelection(signal, dt) {
-  const mapped = map({x:signal.x-offset.x,y:signal.y-offset.y});
+  const mapped = map(adjustSignal(signal,recenterPoint,baseline));
+  if (!mapped) {
+    resetDwell();
+    filtered=null;
+    return;
+  }
   const point = {x:boardBox.left+mapped.x*boardBox.width,y:boardBox.top+mapped.y*boardBox.height};
   const previous = filtered ?? point;
   const weight = Math.hypot(point.x-previous.x,point.y-previous.y)>70 ? .66 : .36;
@@ -236,7 +326,15 @@ function receive(signal, now) {
   const sampling = mode === 'calibrate' || mode === 'center';
   const needsFaceMessage = now-lastOpen > 1500;
   if (!signal || signal.blink) {
-    if (now-lastOpen > 380) {resetDwell(); filtered = null;}
+    if (now-lastOpen > 380) {
+      resetDwell();
+      filtered = null;
+      if (sampling && windowSamples.length) {
+        windowSamples=[];
+        elapsed=0;
+        dot.style.setProperty('--fill','0%');
+      }
+    }
     if (!signal && needsFaceMessage) setStatus('Face out of view. Center your face in the camera and look at the board.');
     // Never credit the elapsed time across a blink or missing face.
     lastDraw = 0;

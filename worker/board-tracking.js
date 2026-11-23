@@ -20,6 +20,17 @@ async function createFaceTracker() {
   catch { return create('CPU'); }
 }
 
+// Express each iris position in its own eye's axes to reduce head-roll and distance effects.
+function irisPosition(mesh, iris, outer, inner, upper, lower) {
+  const [p,a,b,u,v] = [iris,outer,inner,upper,lower].map(index => mesh?.[index]);
+  if (!p || !a || !b || !u || !v) return null;
+  const dx=b.x-a.x, dy=b.y-a.y, width=Math.hypot(dx,dy);
+  if (width < .018 || Math.hypot(u.x-v.x,u.y-v.y) / width < .095) return null;
+  const x=p.x-(a.x+b.x)/2, y=p.y-(a.y+b.y)/2;
+  const ix=(x*dx+y*dy)/(width*width), iy=(y*dx-x*dy)/(width*width);
+  return Number.isFinite(ix) && Number.isFinite(iy) ? {x:ix,y:iy} : null;
+}
+
 // Iris combines eye-look blendshapes and a smaller head-pose contribution.
 function attention(result) {
   const categories = result.faceBlendshapes?.[0]?.categories;
@@ -32,16 +43,26 @@ function attention(result) {
   const pose = result.facialTransformationMatrixes?.[0]?.data;
   const yaw = pose?.length >= 16 ? Math.atan2(pose[8], pose[10]) : 0;
   const pitch = pose?.length >= 16 ? Math.asin(Math.max(-1, Math.min(1, -pose[9]))) : 0;
-  return {x: eyesX + yaw * .7, y: eyesY + pitch * .7, blink};
+  const mesh=result.faceLandmarks?.[0];
+  const a=irisPosition(mesh,468,33,133,159,145);
+  const b=irisPosition(mesh,473,362,263,386,374);
+  const iris=a && b ? {x:(a.x+b.x)/2,y:(a.y+b.y)/2} : null;
+  return {x:eyesX+yaw*.7, y:eyesY+pitch*.7, iris, blink};
 }
 
 function median(values) {
-  const sorted = values.toSorted((a,b) => a-b);
+  const sorted = [...values].sort((a,b) => a-b);
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[middle] : (sorted[middle-1]+sorted[middle])/2;
 }
 function medianPoint(points) {
-  return {x: median(points.map(p => p.x)), y: median(points.map(p => p.y))};
+  const irises=points.map(point=>point.iris).filter(Boolean);
+  return {
+    x:median(points.map(p=>p.x)),y:median(points.map(p=>p.y)),
+    iris:irises.length >= points.length*.75 && irises.length ? {
+      x:median(irises.map(p=>p.x)),y:median(irises.map(p=>p.y))
+    } : null
+  };
 }
 function solve(rows, values, penalty) {
   const n = rows[0].length;
@@ -64,34 +85,62 @@ function solve(rows, values, penalty) {
   }
   return matrix.map(row => row[n]);
 }
-function fitMap(points, curve) {
-  const origin = medianPoint(points);
-  const scaleX = Math.max(...points.map(p=>p.x)) - Math.min(...points.map(p=>p.x));
-  const scaleY = Math.max(...points.map(p=>p.y)) - Math.min(...points.map(p=>p.y));
-  if (scaleX < .015 || scaleY < .015) return null;
-  function terms(point) {
-    const x = (point.x-origin.x)/scaleX, y = (point.y-origin.y)/scaleY;
-    return curve ? [1,x,y,x*y,x*x,y*y] : [1,x,y];
+function adjustSignal(point, center, baseline) {
+  if (!center) return point;
+  return {
+    x:point.x-center.x+baseline.x, y:point.y-center.y+baseline.y,
+    iris:point.iris && center.iris && baseline.iris ? {
+      x:point.iris.x-center.iris.x+baseline.iris.x,
+      y:point.iris.y-center.iris.y+baseline.iris.y
+    } : point.iris
+  };
+}
+
+const baseFeatures = point => [point.x,point.y];
+const irisFeatures = point => point.iris ? [point.iris.x,point.iris.y,point.x,point.y] : null;
+
+function fitMap(points, features, curve) {
+  const inputs=points.map(features);
+  if (inputs.some(input=>!input)) return null;
+  const columns=inputs[0].map((_,i)=>inputs.map(row=>row[i]));
+  const origins=columns.map(median);
+  const scales=columns.map(values=>Math.max(.018,Math.max(...values)-Math.min(...values)));
+  // A set with no appreciable gaze movement cannot describe a usable screen map.
+  if (columns.every(values=>Math.max(...values)-Math.min(...values)<.018)) return null;
+  function terms(input) {
+    const values=input.map((value,i)=>(value-origins[i])/scales[i]);
+    const [x,y]=values;
+    return curve ? [1,...values,x*y,x*x,y*y] : [1,...values];
   }
-  const rows=points.map(terms);
-  const px=solve(rows,points.map(p=>p.u),curve ? .012 : .002);
-  const py=solve(rows,points.map(p=>p.v),curve ? .012 : .002);
+  const rows=inputs.map(terms);
+  const penalty=curve ? .016 : features===irisFeatures ? .014 : .003;
+  const px=solve(rows,points.map(p=>p.u),penalty);
+  const py=solve(rows,points.map(p=>p.v),penalty);
   if (!px || !py) return null;
   return point => {
-    const features=terms(point);
-    const project=coefficients => coefficients.reduce((sum,value,i)=>sum+value*features[i],0);
-    return {x:project(px), y:project(py)};
+    const input=features(point);
+    if (!input) return null;
+    const values=terms(input);
+    const project=coefficients=>coefficients.reduce((sum,value,i)=>sum+value*values[i],0);
+    return {x:project(px),y:project(py)};
   };
 }
 function fitCalibration(points) {
-  // Select the map against unseen target positions, rather than its training error.
-  const score = curve => median(points.map((point,i) => {
-    const map = fitMap(points.filter((_,k) => k!==i),curve);
-    if (!map) return Number.POSITIVE_INFINITY;
-    const guess=map(point);
-    return Math.hypot(guess.x-point.u,guess.y-point.v);
-  }));
-  const linear = score(false), curved = score(true);
-  if (Math.min(linear, curved) > .21) return null;
-  return fitMap(points, curved + .01 < linear);
+  // Choose the feature set and curve using held-out target errors, including edge misses.
+  const models=[];
+  for (const features of [baseFeatures,irisFeatures]) {
+    for (const curve of [false,true]) {
+      const map=fitMap(points,features,curve);
+      if (!map) continue;
+      const errors=points.map((point,i)=>{
+        const trial=fitMap(points.filter((_,k)=>k!==i),features,curve);
+        const guess=trial?.(point);
+        return guess ? Math.hypot(guess.x-point.u,guess.y-point.v) : Infinity;
+      }).sort((a,b)=>a-b);
+      const middle=median(errors), upper=errors[Math.ceil(.75*errors.length)-1];
+      if (middle>.19 || upper>.31) continue;
+      models.push({map,error:middle*.55+upper*.45+(curve ? .008 : 0)});
+    }
+  }
+  return models.sort((a,b)=>a.error-b.error)[0]?.map ?? null;
 }
