@@ -1,25 +1,26 @@
 import {mkdir, readFile, writeFile} from 'node:fs/promises';
+
 const read = name => readFile(new URL(name, import.meta.url), 'utf8');
-const [html, api, lobby, game, simple, classActivity] = await Promise.all(['index.html','api.mjs','lobby.html','game.js','simple.html','ocula-game.js'].map(read));
-const page = html.replace('<!-- CLASSROOM LOBBY -->', () => lobby).replace('// CLASSROOM GAME', () => game);
+const [simple, classActivity] = await Promise.all(['simple.html','ocula-game.js'].map(read));
+const board = simple.replace('// OCULA CLASS GAME', () => classActivity);
+
 await mkdir(new URL('../dist/server/',import.meta.url), {recursive:true});
 await writeFile(new URL('../dist/server/index.js',import.meta.url), `
-${api}
-const page = ${JSON.stringify(page)};
-const board = ${JSON.stringify(simple.replace('// OCULA CLASS GAME', () => classActivity))};
+const board = ${JSON.stringify(board)};
 export default {
-  async fetch(request, env) {
-    const path = new URL(request.url).pathname;
-    if (path.startsWith('/api/')) {
-      try { return await api(request, env.DB); }
-      catch (cause) {
-        console.error('Room request failed', cause);
-        return Response.json({error:'The room service is temporarily unavailable.'},{status:503});
-      }
+  fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === '/match' || (url.pathname === '/' && url.searchParams.has('join'))) {
+      return Response.redirect(new URL('/', url), 302);
     }
-    if (path !== '/' && path !== '/match') return new Response('Not found',{status:404});
-    const isMatch = path === '/match' || new URL(request.url).searchParams.has('join');
-    return new Response(isMatch ? page : board,{headers:{'Content-Type':'text/html; charset=utf-8','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'}});
+    if (url.pathname !== '/') return new Response('Not found',{status:404});
+    return new Response(board,{
+      headers:{
+        'Content-Type':'text/html; charset=utf-8',
+        'Referrer-Policy':'no-referrer',
+        'X-Content-Type-Options':'nosniff'
+      }
+    });
   }
 };
 `);
