@@ -1,146 +1,128 @@
-const visionBase = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18';
-const faceModel = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
-let vision;
+/*
+Portions adapted from OCULA, https://github.com/revolutionarybukhari/ocula
+Source revision 7b0d9495564161b37f114cec4205975549d34603
 
-async function createFaceTracker() {
-  vision ??= import(visionBase + '/vision_bundle.mjs')
-    .then(async ({FaceLandmarker, FilesetResolver}) => ({
-      FaceLandmarker, files: await FilesetResolver.forVisionTasks(visionBase + '/wasm')
-    }))
-    .catch(error => { vision = null; throw error; });
-  const {FaceLandmarker, files} = await vision;
-  const create = delegate => FaceLandmarker.createFromOptions(files, {
-    baseOptions: {modelAssetPath: faceModel, delegate},
-    runningMode: 'VIDEO',
-    numFaces: 1,
-    outputFaceBlendshapes: true,
-    outputFacialTransformationMatrixes: true
+MIT License
+
+Copyright (c) 2026 Husnain Bukhari
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+const faceMeshBase='https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619';
+let faceMeshScript;
+
+function loadFaceMesh() {
+  if (window.FaceMesh) return Promise.resolve(window.FaceMesh);
+  faceMeshScript ??= new Promise((resolve,reject) => {
+    const script=document.createElement('script');
+    script.src=faceMeshBase+'/face_mesh.js';
+    script.crossOrigin='anonymous';
+    script.onload=()=>window.FaceMesh ? resolve(window.FaceMesh) : reject(new Error('Face Mesh unavailable'));
+    script.onerror=()=>reject(new Error('Face Mesh unavailable'));
+    document.head.append(script);
+  }).catch(error=>{faceMeshScript=null; throw error;});
+  return faceMeshScript;
+}
+
+async function createFaceTracker(onGaze) {
+  const FaceMesh=await loadFaceMesh();
+  const tracker=new FaceMesh({locateFile:file=>faceMeshBase+'/'+file});
+  try {
+    tracker.setOptions({
+      maxNumFaces:1, refineLandmarks:true,
+      minDetectionConfidence:.5, minTrackingConfidence:.5
+    });
+    tracker.onResults(result=>{
+      const mesh=result.multiFaceLandmarks?.[0];
+      const raw=mesh && gazeFromLandmarks(mesh);
+      // Match the horizontal sign used by OCULA before applying calibration.
+      const valid=Number.isFinite(raw?.x) && Number.isFinite(raw?.y);
+      onGaze(valid ? {x:-raw.x,y:raw.y} : null);
+    });
+    await tracker.initialize();
+    return tracker;
+  } catch (error) {
+    await tracker.close();
+    throw error;
+  }
+}
+
+function sampleMedian(samples) {
+  const median=values=>{
+    const sorted=values.sort((a,b)=>a-b);
+    const i=Math.floor(sorted.length/2);
+    return sorted.length%2 ? sorted[i] : (sorted[i-1]+sorted[i])/2;
+  };
+  return {x:median(samples.map(sample=>sample.x)),y:median(samples.map(sample=>sample.y))};
+}
+
+function gazeFromLandmarks(lm) {
+  const eye = (outerIdx, innerIdx, topIdx, botIdx, irisIdx) => {
+    const outer = lm[outerIdx], inner = lm[innerIdx];
+    const top   = lm[topIdx],   bot   = lm[botIdx];
+    const iris  = lm[irisIdx];
+    if (!iris) return null;
+    // eye center = midpoint of inner/outer corners
+    const cx = (outer.x + inner.x) / 2;
+    const cy = (top.y + bot.y) / 2;
+    const w  = Math.hypot(outer.x - inner.x, outer.y - inner.y) || 1;
+    const h  = Math.hypot(top.y - bot.y, top.x - bot.x) || 1;
+    // iris position relative to eye center, normalized to eye size
+    return {
+      x: (iris.x - cx) / w,
+      y: (iris.y - cy) / h,
+    };
+  };
+  const g1 = eye(33,  133, 159, 145, 468);
+  const g2 = eye(263, 362, 386, 374, 473);
+  if (!g1 || !g2) return null;
+  return { x: (g1.x + g2.x) / 2, y: (g1.y + g2.y) / 2 };
+}
+
+function fitAffine(points) {
+  // Build sums for normal equations (3x3 symmetric matrix)
+  let m00 = 0, m01 = 0, m02 = 0, m11 = 0, m12 = 0, m22 = 0;
+  let bx0 = 0, bx1 = 0, bx2 = 0, by0 = 0, by1 = 0, by2 = 0;
+  for (const p of points) {
+    const gx = p.gaze.x, gy = p.gaze.y;
+    const sx = p.screen.x, sy = p.screen.y;
+    m00 += gx * gx; m01 += gx * gy; m02 += gx;
+                    m11 += gy * gy; m12 += gy;
+                                    m22 += 1;
+    bx0 += gx * sx; bx1 += gy * sx; bx2 += sx;
+    by0 += gx * sy; by1 += gy * sy; by2 += sy;
+  }
+  const det3 = (a, b, c, d, e, f, g, h, i) =>
+    a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+  const D = det3(m00, m01, m02, m01, m11, m12, m02, m12, m22);
+  if (Math.abs(D) < 1e-10) return null;
+
+  const ax = det3(bx0, m01, m02, bx1, m11, m12, bx2, m12, m22) / D;
+  const bx = det3(m00, bx0, m02, m01, bx1, m12, m02, bx2, m22) / D;
+  const cx = det3(m00, m01, bx0, m01, m11, bx1, m02, m12, bx2) / D;
+  const ay = det3(by0, m01, m02, by1, m11, m12, by2, m12, m22) / D;
+  const by = det3(m00, by0, m02, m01, by1, m12, m02, by2, m22) / D;
+  const cy = det3(m00, m01, by0, m01, m11, by1, m02, m12, by2) / D;
+
+  return (gx, gy) => ({
+    x: ax * gx + bx * gy + cx,
+    y: ay * gx + by * gy + cy,
   });
-  try { return await create('GPU'); }
-  catch { return create('CPU'); }
 }
 
-// Express each iris position in its own eye's axes to reduce head-roll and distance effects.
-function irisPosition(mesh, iris, outer, inner, upper, lower) {
-  const [p,a,b,u,v] = [iris,outer,inner,upper,lower].map(index => mesh?.[index]);
-  if (!p || !a || !b || !u || !v) return null;
-  const dx=b.x-a.x, dy=b.y-a.y, width=Math.hypot(dx,dy);
-  if (width < .018 || Math.hypot(u.x-v.x,u.y-v.y) / width < .095) return null;
-  const x=p.x-(a.x+b.x)/2, y=p.y-(a.y+b.y)/2;
-  const ix=(x*dx+y*dy)/(width*width), iy=(y*dx-x*dy)/(width*width);
-  return Number.isFinite(ix) && Number.isFinite(iy) ? {x:ix,y:iy} : null;
-}
-
-// Iris combines eye-look blendshapes and a smaller head-pose contribution.
-function attention(result) {
-  const categories = result.faceBlendshapes?.[0]?.categories;
-  if (!categories?.length) return null;
-  const scores = Object.fromEntries(categories.map(({categoryName, score}) => [categoryName, score]));
-  const score = name => scores[name] ?? 0;
-  const blink = Math.max(score('eyeBlinkLeft'), score('eyeBlinkRight')) > .55;
-  const eyesX = (score('eyeLookInLeft') + score('eyeLookOutRight') - score('eyeLookOutLeft') - score('eyeLookInRight')) / 2;
-  const eyesY = (score('eyeLookUpLeft') + score('eyeLookUpRight') - score('eyeLookDownLeft') - score('eyeLookDownRight')) / 2;
-  const pose = result.facialTransformationMatrixes?.[0]?.data;
-  const yaw = pose?.length >= 16 ? Math.atan2(pose[8], pose[10]) : 0;
-  const pitch = pose?.length >= 16 ? Math.asin(Math.max(-1, Math.min(1, -pose[9]))) : 0;
-  const mesh=result.faceLandmarks?.[0];
-  const a=irisPosition(mesh,468,33,133,159,145);
-  const b=irisPosition(mesh,473,362,263,386,374);
-  const iris=a && b ? {x:(a.x+b.x)/2,y:(a.y+b.y)/2} : null;
-  return {x:eyesX+yaw*.7, y:eyesY+pitch*.7, iris, blink};
-}
-
-function median(values) {
-  const sorted = [...values].sort((a,b) => a-b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle-1]+sorted[middle])/2;
-}
-function medianPoint(points) {
-  const irises=points.map(point=>point.iris).filter(Boolean);
-  return {
-    x:median(points.map(p=>p.x)),y:median(points.map(p=>p.y)),
-    iris:irises.length >= points.length*.75 && irises.length ? {
-      x:median(irises.map(p=>p.x)),y:median(irises.map(p=>p.y))
-    } : null
-  };
-}
-function solve(rows, values, penalty) {
-  const n = rows[0].length;
-  const matrix = Array.from({length:n}, (_,i) => {
-    const row = Array.from({length:n}, (_,j) => rows.reduce((sum,r) => sum+r[i]*r[j], i===j && i>0 ? penalty : 0));
-    return [...row, rows.reduce((sum,r,k) => sum+r[i]*values[k],0)];
-  });
-  for (let col=0; col<n; col++) {
-    let pivot = col;
-    for (let i=col+1; i<n; i++) if (Math.abs(matrix[i][col]) > Math.abs(matrix[pivot][col])) pivot=i;
-    if (Math.abs(matrix[pivot][col]) < 1e-9) return null;
-    [matrix[col],matrix[pivot]] = [matrix[pivot],matrix[col]];
-    const divisor = matrix[col][col];
-    matrix[col] = matrix[col].map(value => value/divisor);
-    for (let i=0; i<n; i++) {
-      if (i===col) continue;
-      const factor=matrix[i][col];
-      matrix[i] = matrix[i].map((value,j) => value-factor*matrix[col][j]);
-    }
-  }
-  return matrix.map(row => row[n]);
-}
-function adjustSignal(point, center, baseline) {
-  if (!center) return point;
-  return {
-    x:point.x-center.x+baseline.x, y:point.y-center.y+baseline.y,
-    iris:point.iris && center.iris && baseline.iris ? {
-      x:point.iris.x-center.iris.x+baseline.iris.x,
-      y:point.iris.y-center.iris.y+baseline.iris.y
-    } : point.iris
-  };
-}
-
-const baseFeatures = point => [point.x,point.y];
-const irisFeatures = point => point.iris ? [point.iris.x,point.iris.y,point.x,point.y] : null;
-
-function fitMap(points, features, curve) {
-  const inputs=points.map(features);
-  if (inputs.some(input=>!input)) return null;
-  const columns=inputs[0].map((_,i)=>inputs.map(row=>row[i]));
-  const origins=columns.map(median);
-  const scales=columns.map(values=>Math.max(.018,Math.max(...values)-Math.min(...values)));
-  // A set with no appreciable gaze movement cannot describe a usable screen map.
-  if (columns.every(values=>Math.max(...values)-Math.min(...values)<.018)) return null;
-  function terms(input) {
-    const values=input.map((value,i)=>(value-origins[i])/scales[i]);
-    const [x,y]=values;
-    return curve ? [1,...values,x*y,x*x,y*y] : [1,...values];
-  }
-  const rows=inputs.map(terms);
-  const penalty=curve ? .016 : features===irisFeatures ? .014 : .003;
-  const px=solve(rows,points.map(p=>p.u),penalty);
-  const py=solve(rows,points.map(p=>p.v),penalty);
-  if (!px || !py) return null;
-  return point => {
-    const input=features(point);
-    if (!input) return null;
-    const values=terms(input);
-    const project=coefficients=>coefficients.reduce((sum,value,i)=>sum+value*values[i],0);
-    return {x:project(px),y:project(py)};
-  };
-}
-function fitCalibration(points) {
-  // Choose the feature set and curve using held-out target errors, including edge misses.
-  const models=[];
-  for (const features of [baseFeatures,irisFeatures]) {
-    for (const curve of [false,true]) {
-      const map=fitMap(points,features,curve);
-      if (!map) continue;
-      const errors=points.map((point,i)=>{
-        const trial=fitMap(points.filter((_,k)=>k!==i),features,curve);
-        const guess=trial?.(point);
-        return guess ? Math.hypot(guess.x-point.u,guess.y-point.v) : Infinity;
-      }).sort((a,b)=>a-b);
-      const middle=median(errors), upper=errors[Math.ceil(.75*errors.length)-1];
-      if (middle>.19 || upper>.31) continue;
-      models.push({map,error:middle*.55+upper*.45+(curve ? .008 : 0)});
-    }
-  }
-  return models.sort((a,b)=>a.error-b.error)[0]?.map ?? null;
-}

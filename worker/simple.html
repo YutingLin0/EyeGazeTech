@@ -36,6 +36,10 @@ body{background:#eef4f1}.wrap{width:min(100% - 1.5rem,54rem)}
 .game-feedback{min-height:1.5rem;margin:.45rem 0 0;color:#215b48;font-size:.92rem;font-weight:750}
 @media(max-width:390px){.mission{height:6.45rem}}
 @media(max-height:650px){.mission{height:5.15rem;margin-bottom:.4rem}.mission-visual{width:2.65rem;height:2.65rem;font-size:1.4rem}.tile.word{min-height:3.3rem}.tile-picture{font-size:1.2rem}.status{margin:.15rem 0;height:2.9em}}
+
+#gaze-cursor{position:fixed;pointer-events:none;z-index:8;width:1.6rem;height:1.6rem;border-radius:50%;transform:translate(-50%,-50%);background:conic-gradient(#079684 var(--fill,0%),#fff 0);border:2px solid #064b43;box-shadow:0 0 0 2px #ffffffb3;display:grid;place-items:center}
+#gaze-cursor::before{content:'';width:.52rem;height:.52rem;background:#064b43;border-radius:50%}
+@media(max-width:510px){.toolbar{min-height:5.2rem}}
 </style>
 </head>
 <body>
@@ -45,6 +49,7 @@ body{background:#eef4f1}.wrap{width:min(100% - 1.5rem,54rem)}
 <button class="primary" id="enable">Start eye gaze</button>
 <button id="retry" hidden>Recalibrate</button>
 <button id="recenter" hidden>Recenter gaze</button>
+<button id="speed" hidden>Dwell 0.8s</button>
 <button id="stop" hidden>Turn camera off</button>
 </div>
 <p class="status" id="status" role="status">Start eye gaze, or click the pictures to play.</p>
@@ -68,6 +73,7 @@ body{background:#eef4f1}.wrap{width:min(100% - 1.5rem,54rem)}
 <p class="tip">Play in pairs. One person sends the message and the other listens without reading it. Switch roles after all three missions.</p>
 <video id="camera" muted playsinline aria-hidden="true" class="camera"></video>
 <div id="dot" hidden aria-hidden="true"></div>
+<div id="gaze-cursor" hidden aria-hidden="true"></div>
 </main>
 <script>
 // BOARD TRACKING
@@ -76,9 +82,10 @@ const board = get('board');
 const tiles = Array.from(board.querySelectorAll('button'));
 const status = get('status');
 const dot = get('dot');
+const cursor = get('gaze-cursor');
 const video = get('camera');
 const words = [];
-const calibrationOrder = [4,0,2,6,8,1,3,5,7];
+const calibrationTargets=[[.10,.15],[.90,.15],[.50,.50],[.10,.85],[.90,.85]];
 const checks = [2,6,4];
 const missions = [
   {icon:'🏀', title:'After recess', clue:'You’re thirsty after playing. Ask your partner for water.',
@@ -90,12 +97,11 @@ const missions = [
 ];
 const wordPictures={water:'💧',more:'➕',please:'🙏',time:'⏱️'};
 let missionIndex=0, delivered=false;
-const dwellMs = 1150;
-let mode = 'off', camera, detector, generation = 0, animation, deadline;
-let lastVideo = -1, lastOpen = 0, lastDraw = 0;
-let step, windowSamples, elapsed, anchors, map, baseline, recenterPoint, filtered;
-let focused = null, candidate = null, candidateMs = 0, heldMs = 0, locked = null;
-let checkMs = 0, boardBox, tileBoxes;
+const dwellTimes=[500,800,1200];
+let speedIndex=1, mode='off', camera, detector, generation=0, animation, deadline, sending;
+let lastVideo=-1, lastFace=0, lastRender=0, lastFire=0, latestSignal;
+let step, samples, sampleTarget, pointStartedAt, anchors, map, baseline, correction, filtered;
+let focused=null, heldMs=0, locked=null, anchor=null, checkMs=0;
 
 function setStatus(text) {
   if (status.textContent !== text) status.textContent = text;
@@ -165,212 +171,190 @@ for (const tile of tiles) tile.onclick = () => select(tile);
 function resetDwell() {
   focused?.classList.remove('ready');
   focused?.style.removeProperty('--fill');
-  focused = candidate = null;
-  candidateMs = heldMs = 0;
+  focused = null;
+  anchor = null;
+  heldMs = 0;
+  cursor.style.setProperty('--fill','0%');
 }
-function setMode(next, text) {
-  mode = next;
+function setMode(next,text) {
+  mode=next;
   resetDwell();
-  filtered = locked = null;
-  const sampling = next === 'calibrate' || next === 'center';
-  board.classList.toggle('calibrating', sampling);
-  dot.hidden = !sampling;
-  get('enable').hidden = next !== 'off';
-  get('retry').hidden = !['failed','check','play'].includes(next);
-  get('recenter').hidden = next !== 'play';
-  get('stop').hidden = next === 'off';
+  filtered=locked=null;
+  cursor.hidden=true;
+  const sampling=next==='calibrate' || next==='center';
+  board.classList.toggle('calibrating',sampling);
+  dot.hidden=!sampling;
+  get('enable').hidden=next!=='off';
+  get('retry').hidden=!['failed','check','play'].includes(next);
+  get('recenter').hidden=next!=='play';
+  get('speed').hidden=!['check','play'].includes(next);
+  get('stop').hidden=['off','failed'].includes(next);
   for (const tile of tiles) {
     tile.classList.remove('check');
-    tile.disabled = ['starting','calibrate','center','check'].includes(next);
+    tile.disabled=['starting','calibrate','center','check'].includes(next);
   }
   if (text) setStatus(text);
+}
+function closeModel(model) {
+  // The browser may still be finishing the final Face Mesh frame.
+  const pending=model===detector ? sending : null;
+  Promise.resolve(pending).catch(()=>{}).then(()=>model.close()).catch(()=>{});
 }
 function releaseCamera() {
   clearTimeout(deadline);
   cancelAnimationFrame(animation);
-  camera?.getTracks().forEach(track => track.stop());
-  camera = null;
-  video.srcObject = null;
-  detector?.close();
-  detector = null;
+  camera?.getTracks().forEach(track=>track.stop());
+  camera=null;
+  video.srcObject=null;
+  if (detector) closeModel(detector);
+  detector=sending=null;
 }
-function stop(next, text) {
+function stop(next,text) {
   generation++;
   releaseCamera();
   setMode(next,text);
 }
-function measure() {
-  boardBox = board.getBoundingClientRect();
-  tileBoxes = tiles.map(tile => tile.getBoundingClientRect());
+function screenTarget() {
+  const [x,y]=mode==='center' ? calibrationTargets[2] : calibrationTargets[step];
+  return {x:x*window.innerWidth,y:y*window.innerHeight};
 }
-function centerOf(rect) {
-  return {x:rect.left+rect.width/2, y:rect.top+rect.height/2};
-}
-function markDot(index) {
-  measure();
-  const center = centerOf(tileBoxes[index]);
-  dot.style.left = center.x + 'px';
-  dot.style.top = center.y + 'px';
+function markDot() {
+  sampleTarget=screenTarget();
+  dot.style.left=sampleTarget.x+'px';
+  dot.style.top=sampleTarget.y+'px';
   dot.style.setProperty('--fill','0%');
-  dot.textContent = mode === 'center' ? '•' : step+1;
-  elapsed = 0;
-  windowSamples = [];
-  lastOpen = 0;
-  setStatus(mode === 'center' ? 'Look at the center dot to correct drift.' :
-    'Look at dot ' + (step+1) + ' of ' + calibrationOrder.length + ' until the ring fills.');
+  dot.textContent=mode==='center' ? '•' : step+1;
+  pointStartedAt=0;
+  samples=[];
+  setStatus(mode==='center' ? 'Look at the center dot to recenter your gaze.' :
+    'Look at dot '+(step+1)+' of '+calibrationTargets.length+' until the ring fills.');
 }
 function beginCalibration() {
   setMode('calibrate');
-  step = 0;
-  anchors = [];
-  recenterPoint = null;
-  markDot(calibrationOrder[step]);
+  step=0;
+  anchors=[];
+  correction={x:0,y:0};
+  markDot();
 }
 function promptCheck() {
-  tiles.forEach(tile => tile.classList.remove('check'));
+  tiles.forEach(tile=>tile.classList.remove('check'));
   tiles[checks[step]].classList.add('check');
-  checkMs = 0;
+  checkMs=0;
   resetDwell();
-  setStatus('Tracking check ' + (step+1) + ' of ' + checks.length + '. Hold your gaze on the orange tile.');
+  setStatus('Tracking check '+(step+1)+' of '+checks.length+'. Look at the orange tile.');
 }
 function beginCheck() {
   setMode('check');
-  step = 0;
-  measure();
+  step=0;
   promptCheck();
 }
-function sample(signal, dt) {
-  elapsed += dt;
-  if (elapsed < 650) return;
-  windowSamples.push({signal,at:elapsed});
-  while (elapsed-windowSamples[0].at > 1100) windowSamples.shift();
-  const signals=windowSamples.map(frame=>frame.signal);
-  const spread=windowSamples.at(-1).at-windowSamples[0].at;
-  const progress=Math.min(1,spread/850,signals.length/12);
-  dot.style.setProperty('--fill',progress*100+'%');
-  if (progress<1) return;
-  const point=medianPoint(signals);
-  const errors=signals.map(sample=>Math.hypot(sample.x-point.x,sample.y-point.y));
-  if (median(errors)>.04) {
-    setStatus('Hold your head steady and keep looking at the dot.');
-    return;
-  }
-  if (mode === 'center') {
-    recenterPoint = point;
+function sample(signal,now) {
+  if (!pointStartedAt) pointStartedAt=now;
+  const elapsed=now-pointStartedAt;
+  if (elapsed>=600) samples.push(signal);
+  dot.style.setProperty('--fill',Math.min(elapsed/1500,samples.length/5+.4,1)*100+'%');
+  if (elapsed<1500 || samples.length<5) return;
+  const gaze=sampleMedian(samples);
+  if (mode==='center') {
+    correction={x:gaze.x-baseline.x,y:gaze.y-baseline.y};
     beginCheck();
     return;
   }
-  const target = centerOf(tileBoxes[calibrationOrder[step]]);
-  anchors.push({...point,u:(target.x-boardBox.left)/boardBox.width,v:(target.y-boardBox.top)/boardBox.height});
+  anchors.push({gaze,screen:sampleTarget});
   step++;
-  if (step < calibrationOrder.length) {markDot(calibrationOrder[step]); return;}
-  map = fitCalibration(anchors);
+  if (step<calibrationTargets.length) {markDot(); return;}
+  map=fitAffine(anchors);
   if (!map) {
-    stop('failed','Calibration could not distinguish the targets. Face the screen in good light and select Recalibrate.');
+    stop('failed','Calibration could not distinguish the dots. Face the camera and select Recalibrate.');
     return;
   }
-  baseline = anchors[0];
+  baseline=anchors[2].gaze;
   beginCheck();
 }
-function hitTest(point) {
-  const usable = (rect, padding) => point.x>=rect.left-padding && point.x<=rect.right+padding &&
-    point.y>=rect.top-padding && point.y<=rect.bottom+padding;
-  const exact = tileBoxes.findIndex(rect => usable(rect,0));
-  if (exact >= 0) return tiles[exact];
-  let nearest = null, best = Infinity;
-  tileBoxes.forEach((rect,i) => {
-    if (!usable(rect,Math.min(14,rect.height*.16))) return;
-    const center = centerOf(rect);
-    const distance = Math.hypot((point.x-center.x)/rect.width,(point.y-center.y)/rect.height);
-    if (distance<best) {best=distance; nearest=tiles[i];}
-  });
-  return nearest;
+function acceptFrame(signal,now) {
+  latestSignal=signal;
+  if (!signal) {
+    if (now-lastFace>450 && samples?.length && ['calibrate','center'].includes(mode)) markDot();
+    return;
+  }
+  if (now-lastFace>700) {
+    if (mode==='calibrate' || mode==='center') markDot();
+    if (mode==='check') promptCheck();
+    if (mode==='play') setStatus('Hold your gaze on a tile until its ring fills.');
+  }
+  lastFace=now;
+  if (mode==='calibrate' || mode==='center') sample(signal,now);
 }
-function updateSelection(signal, dt) {
-  const mapped = map(adjustSignal(signal,recenterPoint,baseline));
-  if (!mapped) {
+function updateSelection(signal,dt,now) {
+  const raw=map(signal.x-correction.x,signal.y-correction.y);
+  const previous=filtered ?? raw;
+  filtered={x:previous.x*.8+raw.x*.2,y:previous.y*.8+raw.y*.2};
+  const point={
+    x:Math.max(0,Math.min(window.innerWidth-1,filtered.x)),
+    y:Math.max(0,Math.min(window.innerHeight-1,filtered.y))
+  };
+  cursor.hidden=false;
+  cursor.style.left=point.x+'px';
+  cursor.style.top=point.y+'px';
+  const target=document.elementFromPoint(point.x,point.y)?.closest('#board .tile') ?? null;
+  if (target!==focused) {
+    resetDwell();
+    focused=target;
+    focused?.classList.add('ready');
+    if (locked!==focused) locked=null;
+  }
+  if (!focused || focused===locked || now-lastFire<600 ||
+      (mode==='check' && focused!==tiles[checks[step]])) return;
+  if (!anchor || Math.hypot(point.x-anchor.x,point.y-anchor.y)>55) {
+    anchor=point;
+    heldMs=0;
+  } else heldMs+=dt;
+  const fill=Math.min(heldMs/dwellTimes[speedIndex],1)*100+'%';
+  focused.style.setProperty('--fill',fill);
+  cursor.style.setProperty('--fill',fill);
+  if (heldMs<dwellTimes[speedIndex]) return;
+  locked=focused;
+  lastFire=now;
+  if (mode==='play') {select(focused); return;}
+  step++;
+  if (step<checks.length) {promptCheck(); return;}
+  setMode('play','Tracking check passed. Hold your gaze on a tile until its ring fills.');
+}
+function renderTracking(now) {
+  if (!latestSignal || now-lastFace>300) {
+    cursor.hidden=true;
     resetDwell();
     filtered=null;
+    lastRender=0;
+    if (now-lastFace>1500) setStatus('Face out of view. Center your face in the camera.');
     return;
   }
-  const point = {x:boardBox.left+mapped.x*boardBox.width,y:boardBox.top+mapped.y*boardBox.height};
-  const previous = filtered ?? point;
-  const weight = Math.hypot(point.x-previous.x,point.y-previous.y)>70 ? .66 : .36;
-  filtered = {x:previous.x+(point.x-previous.x)*weight,y:previous.y+(point.y-previous.y)*weight};
-  const target = hitTest(filtered);
-  if (target !== candidate) {
-    candidate = target;
-    candidateMs = 0;
-  }
-  candidateMs += dt;
-  if (candidate !== focused && candidateMs >= 115) {
-    focused?.classList.remove('ready');
-    focused?.style.removeProperty('--fill');
-    if (candidate !== locked) locked = null;
-    focused = candidate;
-    heldMs = 0;
-    focused?.classList.add('ready');
-  }
-  if (!focused || candidate !== focused || locked === focused ||
-      (mode === 'check' && focused !== tiles[checks[step]])) return;
-  heldMs += dt;
-  focused.style.setProperty('--fill', Math.min(1,heldMs/dwellMs)*100+'%');
-  if (heldMs < dwellMs) return;
-  locked = focused;
-  if (mode === 'play') {select(focused); return;}
-  step++;
-  if (step < checks.length) {promptCheck(); return;}
-  setMode('play','Tracking check passed. Hold your gaze on a tile until its bar fills.');
-}
-function receive(signal, now) {
-  const sampling = mode === 'calibrate' || mode === 'center';
-  const needsFaceMessage = now-lastOpen > 1500;
-  if (!signal || signal.blink) {
-    if (now-lastOpen > 380) {
-      resetDwell();
-      filtered = null;
-      if (sampling && windowSamples.length) {
-        windowSamples=[];
-        elapsed=0;
-        dot.style.setProperty('--fill','0%');
-      }
-    }
-    if (!signal && needsFaceMessage) setStatus('Face out of view. Center your face in the camera and look at the board.');
-    // Never credit the elapsed time across a blink or missing face.
-    lastDraw = 0;
-    return;
-  }
-  if (needsFaceMessage) {
-    if (sampling) setStatus('Hold your gaze on the dot until the ring fills.');
-    if (mode === 'check') setStatus('Tracking check ' + (step+1) + ' of ' + checks.length + '. Hold your gaze on the orange tile.');
-    if (mode === 'play') setStatus('Hold your gaze on a tile until its bar fills.');
-  }
-  const dt = lastDraw ? Math.min(80,now-lastDraw) : 0;
-  lastOpen = lastDraw = now;
-  if (sampling) {sample(signal,dt); return;}
-  if (mode === 'check') {
-    checkMs += dt;
-    if (checkMs > 9500) {
+  const dt=lastRender ? Math.min(now-lastRender,50) : 0;
+  lastRender=now;
+  if (mode==='check') {
+    checkMs+=dt;
+    if (checkMs>12000) {
       stop('failed','The gaze missed a check tile. Sit square to the screen and select Recalibrate, or click the tiles.');
       return;
     }
   }
-  if (mode === 'check' || mode === 'play') updateSelection(signal,dt);
+  if (mode==='check' || mode==='play') updateSelection(latestSignal,dt,now);
 }
 function runFrames(session) {
   function frame(now) {
-    if (session !== generation) return;
-    try {
-      if (!document.hidden && video.readyState >= 2 && video.currentTime !== lastVideo) {
-        lastVideo = video.currentTime;
-        receive(attention(detector.detectForVideo(video,now)),now);
+    if (session!==generation) return;
+    if (!document.hidden) {
+      if (!sending && video.readyState>=2 && video.currentTime!==lastVideo) {
+        lastVideo=video.currentTime;
+        sending=detector.send({image:video}).catch(()=>{
+          if (session===generation) stop('failed','Tracking stopped. Select Recalibrate to restart.');
+        }).finally(()=>{if (session===generation) sending=null;});
       }
-      if (session === generation) animation = requestAnimationFrame(frame);
-    } catch {
-      stop('failed','Tracking stopped. Recalibrate to restart the camera.');
+      renderTracking(now);
     }
+    if (session===generation) animation=requestAnimationFrame(frame);
   }
-  animation = requestAnimationFrame(frame);
+  animation=requestAnimationFrame(frame);
 }
 async function start() {
   if (!navigator.mediaDevices?.getUserMedia) {
@@ -379,46 +363,57 @@ async function start() {
   }
   say('Follow the dot with your eyes.');
   releaseCamera();
-  const session = ++generation;
+  const session=++generation;
   setMode('starting','Allow camera access to begin.');
-  deadline = setTimeout(() => {
-    if (session === generation) stop('failed','Camera setup timed out. Check the browser permission and select Recalibrate.');
-  },25000);
+  deadline=setTimeout(()=>{
+    if (session===generation) stop('failed','Camera setup timed out. Check the browser permission and select Recalibrate.');
+  },40000);
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:'user',width:{ideal:640},height:{ideal:480}}});
-    if (session !== generation) {stream.getTracks().forEach(track=>track.stop()); return;}
-    camera = stream;
-    video.srcObject = stream;
+    const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:'user',width:{ideal:640},height:{ideal:480}}});
+    if (session!==generation) {stream.getTracks().forEach(track=>track.stop()); return;}
+    camera=stream;
+    video.srcObject=stream;
     setStatus('Loading the eye tracker…');
     await video.play();
-    if (session !== generation) return;
-    const model = await createFaceTracker();
-    if (session !== generation) {model.close(); return;}
-    detector = model;
+    if (session!==generation) return;
+    const model=await createFaceTracker(signal=>{
+      if (session===generation && !document.hidden) acceptFrame(signal,performance.now());
+    });
+    if (session!==generation) {closeModel(model); return;}
+    detector=model;
     clearTimeout(deadline);
-    lastVideo = -1;
-    lastDraw = 0;
+    lastVideo=-1;
+    lastRender=lastFire=0;
+    lastFace=performance.now();
+    latestSignal=null;
     beginCalibration();
     runFrames(session);
   } catch (error) {
-    if (session !== generation) return;
-    stop('failed',error.name === 'NotAllowedError' ? 'Camera access was blocked. Allow it in your browser or click the tiles.' :
+    if (session!==generation) return;
+    stop('failed',error.name==='NotAllowedError' ? 'Camera access was blocked. Allow it in your browser or click the tiles.' :
       'Eye tracking could not start. Select Recalibrate to retry, or click the tiles.');
   }
 }
-get('enable').onclick = start;
-get('retry').onclick = () => detector ? beginCalibration() : start();
-get('recenter').onclick = () => {setMode('center'); markDot(4);};
-get('stop').onclick = () => stop('off','Camera off. Click a tile, or start eye gaze again.');
-function layoutChanged() {
-  if (!camera || !detector) return;
-  if (mode === 'calibrate' || mode === 'center') markDot(mode === 'center' ? 4 : calibrationOrder[step]);
-  else {measure(); resetDwell(); filtered = null;}
-}
-window.addEventListener('resize',layoutChanged);
-document.addEventListener('scroll',layoutChanged,{passive:true});
-document.addEventListener('visibilitychange',() => {resetDwell(); filtered = null; lastDraw = 0;});
-window.addEventListener('pagehide',() => {if (mode !== 'off') stop('off','Camera off.');});
+get('enable').onclick=start;
+get('retry').onclick=()=>detector ? beginCalibration() : start();
+get('recenter').onclick=()=>{setMode('center'); markDot();};
+get('speed').onclick=()=>{
+  speedIndex=(speedIndex+1)%dwellTimes.length;
+  get('speed').textContent='Dwell '+(dwellTimes[speedIndex]/1000).toFixed(1)+'s';
+  resetDwell();
+};
+get('stop').onclick=()=>stop('off','Camera off. Click a tile, or start eye gaze again.');
+window.addEventListener('resize',()=>{if (detector) beginCalibration();});
+document.addEventListener('scroll',()=>{resetDwell(); filtered=null;},{passive:true});
+document.addEventListener('visibilitychange',()=>{
+  latestSignal=null;
+  cursor.hidden=true;
+  resetDwell();
+  filtered=null;
+  lastRender=0;
+  if (mode==='calibrate' || mode==='center') markDot();
+});
+window.addEventListener('pagehide',()=>{if (mode!=='off') stop('off','Camera off.');});
 </script>
 </body>
 </html>
