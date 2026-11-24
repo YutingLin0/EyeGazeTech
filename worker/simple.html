@@ -737,7 +737,7 @@ SOFTWARE.
     </div>
     <div class="game-actions">
       <p id="feedback" role="status"></p>
-      <button class="cta gaze-clickable" id="advance" hidden>Next round</button>
+      <button class="cta gaze-clickable" id="advance" hidden>Play again</button>
       <div class="status-bar">
         <span class="item"><span class="dot" id="status-dot"></span><span class="v" id="status-text">Tracking</span></span>
         <span class="item">Score <strong class="v accent" id="score">0</strong> / 1000</span>
@@ -823,7 +823,8 @@ SOFTWARE.
     let cursorY = window.innerHeight / 2;
     let smoothedGazeX = null;
     let smoothedGazeY = null;
-    const SMOOTH_ALPHA = 0.20;
+    const recentGaze=[];
+    let lastCursorFrame=0;
 
     // ───────── extract gaze vector from face landmarks ─────────
     // FaceMesh iris landmarks (require refineLandmarks: true):
@@ -1007,97 +1008,111 @@ SOFTWARE.
 
     // ───────── cursor + smoothing + dwell click ─────────
     let DWELL_TIME = 800;   // ms
-    let dwellAnchor = null;
-    let dwellStart = 0;
-    let lastFireAt = 0;
-    let gazedEl = null;
-    const DWELL_RADIUS = 55; // pixels
-    const FIRE_COOLDOWN = 600; // ms after a click
+    let dwellAnchor=null, heldMs=0, lastDwellTick=0, lastFireAt=0;
+    let gazedEl=null, pendingTarget=null, pendingSince=0, leftLockAt=0;
+    const DWELL_RADIUS=55, BORDER_MARGIN=12, TARGET_SETTLE_MS=100, FIRE_COOLDOWN=600;
 
-    function resetCursor(preserveLock=false) {
-      if (!preserveLock) locked=null;
+    function clearDwell() {
       dwellAnchor=null;
-      gazedEl?.classList.remove('gazed');
-      gazedEl=null;
-      smoothedGazeX=smoothedGazeY=null;
-      cursor.style.display='none';
+      heldMs=lastDwellTick=0;
       dwellProg.style.strokeDashoffset='169.6';
     }
 
+    function resetCursor(preserveLock=false) {
+      if (!preserveLock) locked=null;
+      clearDwell();
+      gazedEl?.classList.remove('gazed');
+      gazedEl=pendingTarget=null;
+      pendingSince=leftLockAt=0;
+      smoothedGazeX=smoothedGazeY=null;
+      lastCursorFrame=0;
+      recentGaze.length=0;
+      cursor.style.display='none';
+    }
+
+    function smoothGaze() {
+      if (lastCursorFrame===lastFaceTime) return;
+      lastCursorFrame=lastFaceTime;
+      const estimate=gazeToScreenFn(rawGaze.x,rawGaze.y);
+      recentGaze.push({x:estimate.x+screenOffset.x,y:estimate.y+screenOffset.y});
+      if (recentGaze.length>3) recentGaze.shift();
+      const x=median(recentGaze.map(point=>point.x));
+      const y=median(recentGaze.map(point=>point.y));
+      if (smoothedGazeX===null) {
+        smoothedGazeX=x;
+        smoothedGazeY=y;
+        return;
+      }
+      // Isolated outliers are filtered above. Small shifts get a slower response
+      // while a deliberate move across the board catches up more quickly.
+      const dx=x-smoothedGazeX, dy=y-smoothedGazeY;
+      const distance=Math.hypot(dx,dy);
+      if (distance<2.5) return;
+      const gain=.12+Math.min(distance/85,1)*.43;
+      smoothedGazeX+=dx*gain;
+      smoothedGazeY+=dy*gain;
+    }
+
+    function insideMargin(element) {
+      if (!element) return false;
+      const rect=element.getBoundingClientRect();
+      return cursorX>=rect.left-BORDER_MARGIN && cursorX<=rect.right+BORDER_MARGIN &&
+        cursorY>=rect.top-BORDER_MARGIN && cursorY<=rect.bottom+BORDER_MARGIN;
+    }
+
     function updateCursor() {
-      if (appState !== 'tracking' || !gazeToScreenFn || !rawGaze || performance.now()-lastFaceTime>300) {
+      const now=performance.now();
+      if (appState!=='tracking' || !gazeToScreenFn || !rawGaze || now-lastFaceTime>300) {
         resetCursor(true);
         return;
       }
-      const estimated=gazeToScreenFn(rawGaze.x,rawGaze.y);
-      const raw={x:estimated.x+screenOffset.x,y:estimated.y+screenOffset.y};
-      // exponential smoothing
-      if (smoothedGazeX === null) {
-        smoothedGazeX = raw.x;
-        smoothedGazeY = raw.y;
-      } else {
-        smoothedGazeX = smoothedGazeX * (1 - SMOOTH_ALPHA) + raw.x * SMOOTH_ALPHA;
-        smoothedGazeY = smoothedGazeY * (1 - SMOOTH_ALPHA) + raw.y * SMOOTH_ALPHA;
-      }
-      // clamp to viewport
-      cursorX = Math.max(0, Math.min(window.innerWidth-1, smoothedGazeX));
-      cursorY = Math.max(0, Math.min(window.innerHeight-1, smoothedGazeY));
-      cursor.style.left = cursorX + 'px';
-      cursor.style.top  = cursorY + 'px';
+      smoothGaze();
+      cursorX=Math.max(0,Math.min(window.innerWidth-1,smoothedGazeX));
+      cursorY=Math.max(0,Math.min(window.innerHeight-1,smoothedGazeY));
+      cursor.style.left=cursorX+'px';
+      cursor.style.top=cursorY+'px';
+      cursor.style.display='';
 
-      // hit-test for hover highlight
-      cursor.style.display = 'none';
-      const el = document.elementFromPoint(cursorX, cursorY);
-      cursor.style.display = '';
-      const clickable=el?.closest('.gaze-clickable:not(:disabled), .tile:not(:disabled)') ?? null;
-      if (clickable!==locked && el?.closest('.tile, .gaze-clickable')!==locked) locked=null;
-
-      // clear previous gazed highlight if it changed
-      if (gazedEl && gazedEl !== clickable) {
-        gazedEl.classList.remove('gazed');
+      const element=document.elementFromPoint(cursorX,cursorY)?.closest('.gaze-clickable, .tile') ?? null;
+      if (locked) {
+        if (element===locked || (!element && insideMargin(locked))) leftLockAt=0;
+        else {
+          leftLockAt ||= now;
+          if (now-leftLockAt>=TARGET_SETTLE_MS) {locked=null; leftLockAt=0;}
+        }
       }
-      if (clickable) {
-        clickable.classList.add('gazed');
+      let target=element?.disabled ? null : element;
+      if (!element && gazedEl && !gazedEl.disabled && insideMargin(gazedEl)) target=gazedEl;
+      if (target!==pendingTarget) {
+        pendingTarget=target;
+        pendingSince=now;
       }
-      gazedEl = clickable;
-
-      // dwell logic
-      const now = performance.now();
-      if ((locked && clickable===locked) || now-lastFireAt<FIRE_COOLDOWN) {
-        // cooldown — show no dwell progress
-        dwellProg.style.strokeDashoffset = '169.6';
+      if (target!==gazedEl) {
+        // A wobble at a tile boundary pauses dwell instead of moving the highlight.
+        lastDwellTick=0;
+        if (now-pendingSince<TARGET_SETTLE_MS) return;
+        gazedEl?.classList.remove('gazed');
+        gazedEl=target;
+        gazedEl?.classList.add('gazed');
+        clearDwell();
+      }
+      if (!target || target===locked || now-lastFireAt<FIRE_COOLDOWN) {
+        clearDwell();
         return;
       }
-      if (!clickable) {
-        // not over anything clickable — reset dwell
-        dwellAnchor = null;
-        dwellProg.style.strokeDashoffset = '169.6';
-        return;
+      if (!dwellAnchor || Math.hypot(cursorX-dwellAnchor.x,cursorY-dwellAnchor.y)>DWELL_RADIUS) {
+        clearDwell();
+        dwellAnchor={x:cursorX,y:cursorY};
       }
-      if (!dwellAnchor) {
-        dwellAnchor = { x: cursorX, y: cursorY, el: clickable };
-        dwellStart = now;
-        return;
-      }
-      // if cursor wandered out of the dwell zone OR onto a different element → reset anchor
-      const moved = Math.hypot(cursorX - dwellAnchor.x, cursorY - dwellAnchor.y);
-      if (moved > DWELL_RADIUS || dwellAnchor.el !== clickable) {
-        dwellAnchor = { x: cursorX, y: cursorY, el: clickable };
-        dwellStart = now;
-        dwellProg.style.strokeDashoffset = '169.6';
-        return;
-      }
-      // accumulate dwell
-      const dwellElapsed = now - dwellStart;
-      const frac = Math.min(1, dwellElapsed / DWELL_TIME);
-      dwellProg.style.strokeDashoffset = String(169.6 * (1 - frac));
-      if (frac >= 1) {
-        locked=clickable;
-        fireClick(clickable);
-        lastFireAt = now;
-        dwellAnchor = null;
-        dwellProg.style.strokeDashoffset = '169.6';
-      }
+      if (lastDwellTick) heldMs+=Math.min(now-lastDwellTick,50);
+      lastDwellTick=now;
+      const progress=Math.min(1,heldMs/DWELL_TIME);
+      dwellProg.style.strokeDashoffset=String(169.6*(1-progress));
+      if (progress<1) return;
+      locked=target;
+      lastFireAt=now;
+      clearDwell();
+      fireClick(target);
     }
 
     function fireClick(el) {

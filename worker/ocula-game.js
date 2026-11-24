@@ -17,6 +17,7 @@
     const roundEl=document.getElementById('round-number');
     const feedback=document.getElementById('feedback');
     const advance=document.getElementById('advance');
+    const FEEDBACK_MS=2200;
     let roundIndex=0, score=0, missed=false, answered=false;
 
     function showRound() {
@@ -51,18 +52,25 @@
       phraseTiles.forEach(option=>{option.disabled=true;});
       const final=roundIndex===rounds.length-1;
       feedback.textContent=final ? 'Final score '+score+' / '+(rounds.length*100)+'. Swap roles and play again.' :
-        'Message delivered! +'+points+' points.';
-      advance.textContent=final?'Play again':'Next round';
-      advance.hidden=false;
+        'Message delivered! +'+points+' points. Next prompt in a moment.';
+      if (final) {
+        advance.hidden=false;
+        return;
+      }
+      // A gaze still resting on the correct answer must not select it in the next round.
+      if (gazedEl===tile) locked=tile;
+      clearDwell();
+      setTimeout(()=>{
+        roundIndex++;
+        clearDwell();
+        showRound();
+      },FEEDBACK_MS);
     }
     phraseTiles.forEach((tile,index)=>{tile.onclick=()=>choose(index);});
     advance.onclick=()=>{
-      if (!answered) return;
-      roundIndex++;
-      if (roundIndex===rounds.length) {
-        roundIndex=score=0;
-        scoreEl.textContent='0';
-      }
+      if (!answered || roundIndex!==rounds.length-1) return;
+      roundIndex=score=0;
+      scoreEl.textContent='0';
       showRound();
       resetCursor();
     };
