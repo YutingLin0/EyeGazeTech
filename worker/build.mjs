@@ -16,7 +16,7 @@ await mkdir(new URL('../dist/server/',import.meta.url),{recursive:true});
 await writeFile(new URL('../dist/server/index.js',import.meta.url),`
 ${rounds}
 ${api}
-const board=${JSON.stringify(render('/api/classroom'))};
+const publicActivity='https://yutinglin0.github.io/EyeGazeTech/';
 export default {
   async fetch(request,env) {
     const url=new URL(request.url);
@@ -27,14 +27,11 @@ export default {
         return respond({error:'The classroom is temporarily unavailable.'},503,request.headers.get('Origin'));
       }
     }
-    if (url.pathname==='/match' || (url.pathname==='/' && url.searchParams.has('join'))) {
-      return Response.redirect(new URL('/',url),302);
-    }
-    if (url.pathname!=='/') return new Response('Not found',{status:404});
-    return new Response(board,{
-      headers:{'Content-Type':'text/html; charset=utf-8','Referrer-Policy':'no-referrer',
-        'X-Content-Type-Options':'nosniff','Cache-Control':'no-cache'}
-    });
+    if (url.pathname!=='/' && url.pathname!=='/match') return new Response('Not found',{status:404});
+    const link=new URL(publicActivity);
+    const code=url.searchParams.get('room');
+    if (code && /^[A-Z2-9]{6}$/i.test(code)) link.searchParams.set('room',code.toUpperCase());
+    return Response.redirect(link,302);
   }
 };
 `);
