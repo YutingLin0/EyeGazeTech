@@ -1071,12 +1071,12 @@ SOFTWARE.
     // ───────── cursor + smoothing + dwell click ─────────
     const dwellSpeeds=[500,600,800,1200];
     let DWELL_TIME=600;
-    let dwellAnchor=null, heldMs=0, lastDwellTick=0, lastFireAt=0;
+    let heldMs=0, lastDwellTick=0, lastFireAt=0;
     let gazedEl=null, pendingTarget=null, pendingSince=0, leftLockAt=0;
-    const DWELL_RADIUS=55, BORDER_MARGIN=12, TARGET_SETTLE_MS=100, FIRE_COOLDOWN=600;
+    const BORDER_MARGIN=12, TARGET_SETTLE_MS=100, TARGET_SWITCH_MS=180;
+    const FRAME_MAX_AGE_MS=150, TRACKING_GRACE_MS=330, FIRE_COOLDOWN=600;
 
     function clearDwell() {
-      dwellAnchor=null;
       heldMs=lastDwellTick=0;
       dwellProg.style.strokeDashoffset='169.6';
     }
@@ -1125,8 +1125,15 @@ SOFTWARE.
 
     function updateCursor() {
       const now=performance.now();
-      if (appState!=='tracking' || !gazeToScreenFn || !rawGaze || now-lastFaceTime>300) {
+      if (appState!=='tracking' || !gazeToScreenFn) {
         resetCursor(true);
+        return;
+      }
+      const frameAge=now-lastFaceTime;
+      if (!rawGaze || frameAge>FRAME_MAX_AGE_MS) {
+        // Keep the current tile and ring through brief blinks. Missing frames never earn dwell time.
+        lastDwellTick=0;
+        if (frameAge>TRACKING_GRACE_MS) resetCursor(true);
         return;
       }
       smoothGaze();
@@ -1153,7 +1160,8 @@ SOFTWARE.
       if (target!==gazedEl) {
         // A wobble at a tile boundary pauses dwell instead of moving the highlight.
         lastDwellTick=0;
-        if (now-pendingSince<TARGET_SETTLE_MS) return;
+        const settle=gazedEl ? TARGET_SWITCH_MS : TARGET_SETTLE_MS;
+        if (now-pendingSince<settle) return;
         gazedEl?.classList.remove('gazed');
         gazedEl=target;
         gazedEl?.classList.add('gazed');
@@ -1163,10 +1171,7 @@ SOFTWARE.
         clearDwell();
         return;
       }
-      if (!dwellAnchor || Math.hypot(cursorX-dwellAnchor.x,cursorY-dwellAnchor.y)>DWELL_RADIUS) {
-        clearDwell();
-        dwellAnchor={x:cursorX,y:cursorY};
-      }
+      // Dwell belongs to the tile, so movement within its bounds does not reset it.
       if (lastDwellTick) heldMs+=Math.min(now-lastDwellTick,50);
       lastDwellTick=now;
       const progress=Math.min(1,heldMs/DWELL_TIME);
