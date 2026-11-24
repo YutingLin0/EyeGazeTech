@@ -886,7 +886,7 @@ SOFTWARE.
     let smoothedGazeX = null;
     let smoothedGazeY = null;
     const recentGaze=[];
-    let lastCursorFrame=0;
+    let lastCursorFrame=0, gazeAim=null;
 
     // ───────── extract gaze vector from face landmarks ─────────
     // FaceMesh iris landmarks (require refineLandmarks: true):
@@ -1089,38 +1089,42 @@ SOFTWARE.
       pendingSince=leftLockAt=0;
       smoothedGazeX=smoothedGazeY=null;
       lastCursorFrame=0;
+      gazeAim=null;
       recentGaze.length=0;
       cursor.style.display='none';
     }
 
     function smoothGaze() {
       if (lastCursorFrame===lastFaceTime) return;
+      const frameMs=Math.max(1,Math.min(lastFaceTime-lastCursorFrame,70));
       lastCursorFrame=lastFaceTime;
       const estimate=gazeToScreenFn(rawGaze.x,rawGaze.y);
       recentGaze.push({x:estimate.x+screenOffset.x,y:estimate.y+screenOffset.y});
-      if (recentGaze.length>3) recentGaze.shift();
+      if (recentGaze.length>5) recentGaze.shift();
       const x=median(recentGaze.map(point=>point.x));
       const y=median(recentGaze.map(point=>point.y));
+      gazeAim={x,y};
       if (smoothedGazeX===null) {
         smoothedGazeX=x;
         smoothedGazeY=y;
         return;
       }
-      // Isolated outliers are filtered above. Small shifts get a slower response
-      // while a deliberate move across the board catches up more quickly.
+      // Suppress stationary jitter while following sustained movements faster.
       const dx=x-smoothedGazeX, dy=y-smoothedGazeY;
       const distance=Math.hypot(dx,dy);
-      if (distance<2.5) return;
-      const gain=.12+Math.min(distance/85,1)*.43;
+      if (distance<=4) return;
+      const movement=Math.min(Math.max((distance-12)/100,0),1);
+      const responseMs=130-65*movement;
+      const gain=1-Math.exp(-frameMs/responseMs);
       smoothedGazeX+=dx*gain;
       smoothedGazeY+=dy*gain;
     }
 
-    function insideMargin(element) {
+    function insideMargin(element,x=cursorX,y=cursorY) {
       if (!element) return false;
       const rect=element.getBoundingClientRect();
-      return cursorX>=rect.left-BORDER_MARGIN && cursorX<=rect.right+BORDER_MARGIN &&
-        cursorY>=rect.top-BORDER_MARGIN && cursorY<=rect.bottom+BORDER_MARGIN;
+      return x>=rect.left-BORDER_MARGIN && x<=rect.right+BORDER_MARGIN &&
+        y>=rect.top-BORDER_MARGIN && y<=rect.bottom+BORDER_MARGIN;
     }
 
     function updateCursor() {
@@ -1169,6 +1173,11 @@ SOFTWARE.
       }
       if (!target || target===locked || now-lastFireAt<FIRE_COOLDOWN) {
         clearDwell();
+        return;
+      }
+      // Pause the old tile if the gaze has moved away and the ring is still catching up.
+      if (!gazeAim || !insideMargin(target,gazeAim.x,gazeAim.y)) {
+        lastDwellTick=0;
         return;
       }
       // Dwell belongs to the tile, so movement within its bounds does not reset it.
