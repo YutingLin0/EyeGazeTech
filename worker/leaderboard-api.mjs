@@ -95,6 +95,22 @@ async function activityApi(request,db) {
     if (!result.meta.changes) return reply({error:'The room changed. Refresh and try again.'},409);
     return reply({left:true});
   }
+  if (action==='prompt') {
+    if (!room.started) return reply({error:'Wait for your host to start.'},409);
+    if (room.ended) return reply({error:'The host ended the game. Scores are final.',ended:true},409);
+    const {round}=payload;
+    if (!Number.isInteger(round)||!rounds[round]) return reply({error:'Invalid prompt.'},400);
+    const ready=await db.prepare(
+      'UPDATE activity_players SET prompt_started_at=COALESCE(prompt_started_at,?) WHERE room_code=? AND token=? AND round=? AND EXISTS (SELECT 1 FROM activity_rooms WHERE code=? AND ended=0) RETURNING round'
+    ).bind(now,code,token,round,code).first();
+    if (!ready) {
+      if ((await db.prepare('SELECT ended FROM activity_rooms WHERE code=?').bind(code).first())?.ended) {
+        return reply({error:'The host ended the game. Scores are final.',ended:true},409);
+      }
+      return reply({error:'This prompt is no longer available. Refresh to resume.'},409);
+    }
+    return reply({ready:true});
+  }
   if (action==='answer') {
     const player=await db.prepare('SELECT round, score, missed FROM activity_players WHERE room_code=? AND token=?').bind(code,token).first();
     if (!player) return reply({error:'Join the room as a player first.'},403);
@@ -107,12 +123,14 @@ async function activityApi(request,db) {
     if (player.round!==round) return reply({error:'This prompt is out of date. Refresh the activity.'},409);
     const correct=rounds[round].phrase===choice;
     if (correct) {
+      // The first prompt request starts the clock. Older clients without a timer get base points.
+      const bonus='CASE WHEN prompt_started_at IS NULL THEN 0 ELSE MAX(0, 50 - CAST(MAX(0, ? - prompt_started_at) / 200 AS INTEGER)) END';
       const updated=await db.prepare(
-        'UPDATE activity_players SET round=round+1, score=score+CASE WHEN missed=1 THEN 50 ELSE 100 END, missed=0 WHERE room_code=? AND token=? AND round=? AND EXISTS (SELECT 1 FROM activity_rooms WHERE code=? AND ended=0) RETURNING round, score'
-      ).bind(code,token,round,code).first();
+        `UPDATE activity_players SET round=round+1, score=score+(CASE WHEN missed=1 THEN 50 ELSE 100 END)+(${bonus}), last_speed_bonus=(${bonus}), missed=0, prompt_started_at=NULL WHERE room_code=? AND token=? AND round=? AND EXISTS (SELECT 1 FROM activity_rooms WHERE code=? AND ended=0) RETURNING round, score, last_speed_bonus`
+      ).bind(now,now,code,token,round,code).first();
       if (!updated && (await db.prepare('SELECT ended FROM activity_rooms WHERE code=?').bind(code).first())?.ended) return reply(stopMessage,409);
       const latest=updated??await db.prepare('SELECT round,score FROM activity_players WHERE room_code=? AND token=?').bind(code,token).first();
-      return reply({correct:true,round:latest.round,score:latest.score,points:updated?latest.score-player.score:null});
+      return reply({correct:true,round:latest.round,score:latest.score,points:updated?latest.score-player.score:null,bonus:updated?latest.last_speed_bonus:0});
     }
     const updated=await db.prepare('UPDATE activity_players SET missed=1 WHERE room_code=? AND token=? AND round=? AND EXISTS (SELECT 1 FROM activity_rooms WHERE code=? AND ended=0)').bind(code,token,round,code).run();
     if (!updated.meta.changes) {

@@ -6,18 +6,41 @@
     const feedback=document.getElementById('feedback');
     const FEEDBACK_MS=2200;
     let roundIndex=0, score=0, answered=false, answerInFlight=false;
+    let promptReady=false, preparingPrompt=false;
 
     function showRound() {
-      const round=rounds[roundIndex];
-      sceneEl.textContent=round.scene;
-      clueEl.textContent=round.clue;
+      sceneEl.textContent='Getting ready…';
+      clueEl.textContent='';
       roundEl.textContent='Round '+(roundIndex+1)+' of '+rounds.length;
-      feedback.textContent='Select the message that fits.';
+      feedback.textContent='';
       answered=false;
+      promptReady=false;
       phraseTiles.forEach(tile=>{
-        tile.disabled=false;
+        tile.disabled=true;
         tile.classList.remove('correct','incorrect');
       });
+      prepareRound();
+    }
+    async function prepareRound() {
+      if (appState!=='tracking'||answered||promptReady||preparingPrompt) return;
+      const selectedRound=roundIndex;
+      preparingPrompt=true;
+      try {
+        await roomRequest('prompt',{round:selectedRound});
+        if (appState!=='tracking'||roundIndex!==selectedRound) return;
+        const round=rounds[roundIndex];
+        sceneEl.textContent=round.scene;
+        clueEl.textContent=round.clue;
+        feedback.textContent='Select the message that fits. Faster correct answers earn bonus points.';
+        phraseTiles.forEach(tile=>{tile.disabled=false;});
+        promptReady=true;
+      } catch (error) {
+        if (error.ended) {refreshRoom();return;}
+        feedback.textContent=error.message;
+        if (!error.status||error.status>=500) {
+          setTimeout(()=>{if(roundIndex===selectedRound) prepareRound();},1300);
+        }
+      } finally {preparingPrompt=false;}
     }
     function restoreRound(player) {
       roundIndex=player.round;
@@ -26,7 +49,7 @@
       showRound();
     }
     async function choose(index) {
-      if (appState!=='tracking'||answered||answerInFlight) return;
+      if (appState!=='tracking'||!promptReady||answered||answerInFlight) return;
       answerInFlight=true;
       const tile=phraseTiles[index];
       const selectedRound=roundIndex;
@@ -52,9 +75,9 @@
       tile.classList.add('correct');
       phraseTiles.forEach(option=>{option.disabled=true;});
       const final=result.round===rounds.length;
-      feedback.textContent=final?'Your score '+score+' / '+(rounds.length*100)+'. Loading class results…':
-        result.points===null?'Answer recorded. Next prompt in a moment.':
-          'Message delivered! +'+result.points+' points. Next prompt in a moment.';
+      const award=result.points===null?'Answer recorded.':
+        'Message delivered! +'+result.points+' points'+(result.bonus?' ('+result.bonus+' speed bonus)':'')+'.';
+      feedback.textContent=award+(final?' Final score: '+score+' / '+(rounds.length*150)+'.':' Next prompt in a moment.');
       if (gazedEl===tile) locked=tile;
       clearDwell();
       setTimeout(()=>{

@@ -734,7 +734,7 @@ SOFTWARE.
     <h1 class="activity-title">Eye Gaze <span class="accent">Activity</span></h1>
     <div class="tagline">Find the right message</div>
     <p class="lede">
-      Choose a spoken message in each of ten situations. Score 100 points on the first try or 50 after a retry.
+      Choose the message that fits each situation. Earn 100 points on the first try or 50 after a retry, plus up to 50 bonus points for a fast answer.
     </p>
     <div class="steps">
       <div class="step">
@@ -800,7 +800,7 @@ SOFTWARE.
       <p id="feedback" role="status"></p>
       <div class="status-bar">
         <span class="item"><span class="dot" id="status-dot"></span><span class="v" id="status-text">Tracking</span></span>
-        <span class="item">Score <strong class="v accent" id="score">0</strong> / 1000</span>
+        <span class="item">Score <strong class="v accent" id="score">0</strong> / 1500</span>
         <span class="item camera-control" id="calib-result" role="status" hidden></span>
         <span class="item camera-control">Dwell <span class="v" id="dwell-display">0.6 s</span></span>
         <button class="gaze-clickable camera-control" data-action="dwell-cycle">Speed</button>
@@ -867,6 +867,7 @@ SOFTWARE.
       appState = s;
       document.body.dataset.state = s;
       document.querySelectorAll('.screen').forEach(screen=>{screen.inert=!screen.classList.contains(s);});
+      if (s==='tracking') prepareRound();
     }
 
     // ───────── face mesh + gaze ─────────
@@ -1373,18 +1374,41 @@ SOFTWARE.
     const feedback=document.getElementById('feedback');
     const FEEDBACK_MS=2200;
     let roundIndex=0, score=0, answered=false, answerInFlight=false;
+    let promptReady=false, preparingPrompt=false;
 
     function showRound() {
-      const round=rounds[roundIndex];
-      sceneEl.textContent=round.scene;
-      clueEl.textContent=round.clue;
+      sceneEl.textContent='Getting ready…';
+      clueEl.textContent='';
       roundEl.textContent='Round '+(roundIndex+1)+' of '+rounds.length;
-      feedback.textContent='Select the message that fits.';
+      feedback.textContent='';
       answered=false;
+      promptReady=false;
       phraseTiles.forEach(tile=>{
-        tile.disabled=false;
+        tile.disabled=true;
         tile.classList.remove('correct','incorrect');
       });
+      prepareRound();
+    }
+    async function prepareRound() {
+      if (appState!=='tracking'||answered||promptReady||preparingPrompt) return;
+      const selectedRound=roundIndex;
+      preparingPrompt=true;
+      try {
+        await roomRequest('prompt',{round:selectedRound});
+        if (appState!=='tracking'||roundIndex!==selectedRound) return;
+        const round=rounds[roundIndex];
+        sceneEl.textContent=round.scene;
+        clueEl.textContent=round.clue;
+        feedback.textContent='Select the message that fits. Faster correct answers earn bonus points.';
+        phraseTiles.forEach(tile=>{tile.disabled=false;});
+        promptReady=true;
+      } catch (error) {
+        if (error.ended) {refreshRoom();return;}
+        feedback.textContent=error.message;
+        if (!error.status||error.status>=500) {
+          setTimeout(()=>{if(roundIndex===selectedRound) prepareRound();},1300);
+        }
+      } finally {preparingPrompt=false;}
     }
     function restoreRound(player) {
       roundIndex=player.round;
@@ -1393,7 +1417,7 @@ SOFTWARE.
       showRound();
     }
     async function choose(index) {
-      if (appState!=='tracking'||answered||answerInFlight) return;
+      if (appState!=='tracking'||!promptReady||answered||answerInFlight) return;
       answerInFlight=true;
       const tile=phraseTiles[index];
       const selectedRound=roundIndex;
@@ -1419,9 +1443,9 @@ SOFTWARE.
       tile.classList.add('correct');
       phraseTiles.forEach(option=>{option.disabled=true;});
       const final=result.round===rounds.length;
-      feedback.textContent=final?'Your score '+score+' / '+(rounds.length*100)+'. Loading class results…':
-        result.points===null?'Answer recorded. Next prompt in a moment.':
-          'Message delivered! +'+result.points+' points. Next prompt in a moment.';
+      const award=result.points===null?'Answer recorded.':
+        'Message delivered! +'+result.points+' points'+(result.bonus?' ('+result.bonus+' speed bonus)':'')+'.';
+      feedback.textContent=award+(final?' Final score: '+score+' / '+(rounds.length*150)+'.':' Next prompt in a moment.');
       if (gazedEl===tile) locked=tile;
       clearDwell();
       setTimeout(()=>{
