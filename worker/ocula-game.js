@@ -34,9 +34,11 @@
       try {
         result=await roomRequest('answer',{round:roundIndex,choice:index});
       } catch (error) {
-        feedback.textContent=error.message;
+        if (error.ended) refreshRoom();
+        else feedback.textContent=error.message;
         return;
       } finally {answerInFlight=false;}
+      if (appState!=='tracking') return;
       speak(PHRASES[index].phrase);
       if (!result.correct) {
         tile.classList.add('incorrect');
@@ -56,7 +58,7 @@
       if (gazedEl===tile) locked=tile;
       clearDwell();
       setTimeout(()=>{
-        if (roundIndex!==selectedRound) return;
+        if (appState!=='tracking'||roundIndex!==selectedRound) return;
         if (final) {openClassroom();return;}
         roundIndex=result.round;
         clearDwell();

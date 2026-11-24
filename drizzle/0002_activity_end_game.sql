@@ -1,0 +1,1 @@
+ALTER TABLE activity_rooms ADD COLUMN ended INTEGER NOT NULL DEFAULT 0 CHECK(ended IN (0,1));

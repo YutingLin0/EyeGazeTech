@@ -7,10 +7,13 @@
     const panel=here('room-panel');
     const results=here('class-results');
     const startRoomButton=here('start-room');
+    const endRoomButton=here('end-room');
+    const roster=here('host-roster');
+    const rosterRows=here('host-roster-rows');
     const copyRoomButton=here('copy-room');
     const classError=here('class-error');
     let membership=null, roomView=null, pollBusy=false, activityOpened=false;
-    let entryBusy=false,pollTimer=null;
+    let entryBusy=false,hostBusy=false,pollTimer=null;
     const invitedCode=new URL(location.href).searchParams.get('room')?.toUpperCase()??'';
     if (/^[A-Z2-9]{6}$/.test(invitedCode)) codeField.value=invitedCode;
     try {
@@ -34,7 +37,7 @@
       });
       const result=await response.json().catch(()=>null);
       if (!response.ok||!result) {
-        throw Object.assign(new Error(result?.error??'Could not reach the class. Try again.'),{status:response.status});
+        throw Object.assign(new Error(result?.error??'Could not reach the class. Try again.'),{status:response.status,ended:result?.ended===true});
       }
       return result;
     }
@@ -57,7 +60,24 @@
       const winners=leaders.filter(player=>player.score===leaders[0]?.score).map(player=>player.nickname);
       here('class-winner').textContent=winners.length>1?'Tie for first · '+winners.join(', '):'Winner · '+(winners[0]??'');
     }
+    function showRoster(view) {
+      const players=view.roster??[];
+      roster.hidden=!view.host||view.phase==='finished'||!players.length;
+      if (roster.hidden) return;
+      const rows=players.map(player=>{
+        const row=document.createElement('tr');
+        const progress=player.round===rounds.length?'Finished':player.round+' / '+rounds.length;
+        for (const text of [player.nickname,String(player.score),progress]) {
+          const cell=document.createElement('td');
+          cell.textContent=text;
+          row.append(cell);
+        }
+        return row;
+      });
+      rosterRows.replaceChildren(...rows);
+    }
     function renderRoom(view) {
+      if (roomView?.phase==='finished'&&view&&view.phase!=='finished') return;
       roomView=view;
       entry.hidden=!!view;
       panel.hidden=!view;
@@ -65,7 +85,10 @@
       here('room-code-text').textContent=view.code;
       here('room-role').textContent=view.host?'Host view':'Player view';
       startRoomButton.hidden=!view.host||view.phase!=='waiting';
-      startRoomButton.disabled=!view.total;
+      startRoomButton.disabled=hostBusy||!view.total;
+      endRoomButton.hidden=!view.host||view.phase!=='playing';
+      endRoomButton.disabled=hostBusy;
+      showRoster(view);
       copyRoomButton.hidden=!view.host||view.phase!=='waiting';
       results.hidden=view.phase!=='finished';
       const leave=here('leave-room');
@@ -73,22 +96,26 @@
       leave.textContent=view.host&&view.phase==='waiting'?'Close room':'Leave room';
       if (view.phase==='waiting') {
         here('room-progress').textContent=view.total+' joined · '+(view.host?'Start when everyone has entered a name.':'Waiting for the host to start.');
-        here('room-names').textContent=(view.names??[]).join(' · ');
+        here('room-names').textContent=view.host?'':(view.names??[]).join(' · ');
       } else {
         here('room-names').textContent='';
-        here('room-progress').textContent=view.finished+' of '+view.total+' finished';
+        here('room-progress').textContent=(view.ended?'Game ended · ':'')+view.finished+' of '+view.total+' finished';
       }
-      if (view.phase==='finished') showRanking(view.leaders);
+      if (view.phase==='finished') {
+        showRanking(view.leaders);
+        if (view.ended&&appState!=='classroom') {
+          stopCamera();
+          setState('classroom');
+        }
+      }
       if (view.phase==='playing'&&!view.host&&view.me.round<rounds.length&&!activityOpened) {
         activityOpened=true;
         restoreRound(view.me);
-        clearInterval(pollTimer);
-        pollTimer=null;
         setState('welcome');
       }
     }
     async function refreshRoom() {
-      if (!membership||pollBusy||appState!=='classroom') return;
+      if (!membership||pollBusy||roomView?.phase==='finished') return;
       const current=membership;
       pollBusy=true;
       try {
@@ -99,7 +126,12 @@
         }
       } catch (error) {
         if (membership!==current) return;
-        if ([403,404].includes(error.status)) {setMembership(null);renderRoom(null);}
+        if ([403,404].includes(error.status)) {
+          setMembership(null);
+          stopCamera();
+          setState('classroom');
+          renderRoom(null);
+        }
         setClassError(error);
       } finally {pollBusy=false;}
     }
@@ -126,10 +158,22 @@
       enter('join',{code:codeField.value.trim().toUpperCase(),nickname:nameField.value});
     };
     here('create-room').onclick=()=>enter('create');
-    startRoomButton.onclick=async()=>{
-      startRoomButton.disabled=true;
-      try {renderRoom(await roomRequest('start'));}
-      catch(error){setClassError(error);startRoomButton.disabled=false;}
+    async function hostAction(action) {
+      if (hostBusy) return;
+      hostBusy=true;
+      startRoomButton.disabled=endRoomButton.disabled=true;
+      setClassError();
+      try {renderRoom(await roomRequest(action));}
+      catch(error){setClassError(error);}
+      finally {
+        hostBusy=false;
+        startRoomButton.disabled=!roomView?.total;
+        endRoomButton.disabled=false;
+      }
+    }
+    startRoomButton.onclick=()=>hostAction('start');
+    endRoomButton.onclick=()=>{
+      if (confirm('End this game for everyone and show the scores so far?')) hostAction('end');
     };
     copyRoomButton.onclick=async()=>{
       const link=new URL(location.href);

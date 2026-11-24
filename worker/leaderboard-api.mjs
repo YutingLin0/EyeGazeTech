@@ -17,11 +17,12 @@ async function roomView(db,room,token) {
   const host=room.host_token===token;
   if (!host&&!me) return null;
   const finished=players.filter(player=>player.round===rounds.length).length;
-  const phase=!room.started?'waiting':finished===players.length?'finished':'playing';
+  const phase=!room.started?'waiting':room.ended||finished===players.length?'finished':'playing';
   return {
-    code:room.code,host,phase,finished,total:players.length,
+    code:room.code,host,phase,finished,total:players.length,ended:!!room.ended,
     me:me&&{round:me.round,score:me.score,missed:!!me.missed},
     ...(phase==='waiting'?{names:players.map(player=>player.nickname)}:{}),
+    ...(host&&phase!=='finished'?{roster:players.map(({nickname,round,score})=>({nickname,round,score}))}:{}),
     ...(phase==='finished'?{leaders:players.map(({nickname,score})=>({nickname,score}))}:{})
   };
 }
@@ -72,11 +73,19 @@ async function activityApi(request,db) {
   }
   if (action==='start') {
     if (room.host_token!==token) return reply({error:'Only the host can start the activity.'},403);
+    if (room.started) return reply(await roomView(db,room,token));
     const result=await db.prepare(
       'UPDATE activity_rooms SET started=1 WHERE code=? AND EXISTS (SELECT 1 FROM activity_players WHERE room_code=?)'
     ).bind(code,code).run();
     if (!result.meta.changes) return reply({error:'Wait for at least one player.'},409);
     return reply(await roomView(db,{...room,started:1},token));
+  }
+  if (action==='end') {
+    if (room.host_token!==token) return reply({error:'Only the host can end the game.'},403);
+    if (!room.started) return reply({error:'Start the activity before ending the game.'},409);
+    if (room.ended) return reply(await roomView(db,room,token));
+    await db.prepare('UPDATE activity_rooms SET ended=1 WHERE code=? AND started=1').bind(code).run();
+    return reply(await roomView(db,{...room,ended:1},token));
   }
   if (action==='leave') {
     if (room.started) return reply({error:'The activity has started. Stay in the room until scores are shown.'},409);
@@ -90,6 +99,8 @@ async function activityApi(request,db) {
     const player=await db.prepare('SELECT round, score, missed FROM activity_players WHERE room_code=? AND token=?').bind(code,token).first();
     if (!player) return reply({error:'Join the room as a player first.'},403);
     if (!room.started) return reply({error:'Wait for your host to start.'},409);
+    const stopMessage={error:'The host ended the game. Scores are final.',ended:true};
+    if (room.ended) return reply(stopMessage,409);
     const {round,choice}=payload;
     if (!Number.isInteger(round)||!rounds[round]||!Number.isInteger(choice)||choice<0||choice>7) return reply({error:'Invalid answer.'},400);
     if (player.round>round) return reply({correct:true,round:player.round,score:player.score,points:null});
@@ -97,13 +108,15 @@ async function activityApi(request,db) {
     const correct=rounds[round].phrase===choice;
     if (correct) {
       const updated=await db.prepare(
-        'UPDATE activity_players SET round=round+1, score=score+CASE WHEN missed=1 THEN 50 ELSE 100 END, missed=0 WHERE room_code=? AND token=? AND round=? RETURNING round, score'
-      ).bind(code,token,round).first();
+        'UPDATE activity_players SET round=round+1, score=score+CASE WHEN missed=1 THEN 50 ELSE 100 END, missed=0 WHERE room_code=? AND token=? AND round=? AND EXISTS (SELECT 1 FROM activity_rooms WHERE code=? AND ended=0) RETURNING round, score'
+      ).bind(code,token,round,code).first();
+      if (!updated && (await db.prepare('SELECT ended FROM activity_rooms WHERE code=?').bind(code).first())?.ended) return reply(stopMessage,409);
       const latest=updated??await db.prepare('SELECT round,score FROM activity_players WHERE room_code=? AND token=?').bind(code,token).first();
       return reply({correct:true,round:latest.round,score:latest.score,points:updated?latest.score-player.score:null});
     }
-    const updated=await db.prepare('UPDATE activity_players SET missed=1 WHERE room_code=? AND token=? AND round=?').bind(code,token,round).run();
+    const updated=await db.prepare('UPDATE activity_players SET missed=1 WHERE room_code=? AND token=? AND round=? AND EXISTS (SELECT 1 FROM activity_rooms WHERE code=? AND ended=0)').bind(code,token,round,code).run();
     if (!updated.meta.changes) {
+      if ((await db.prepare('SELECT ended FROM activity_rooms WHERE code=?').bind(code).first())?.ended) return reply(stopMessage,409);
       const latest=await db.prepare('SELECT round,score FROM activity_players WHERE room_code=? AND token=?').bind(code,token).first();
       return reply({correct:true,round:latest.round,score:latest.score,points:null});
     }

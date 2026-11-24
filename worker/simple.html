@@ -670,6 +670,13 @@ SOFTWARE.
   .class-card p{color:#d4cfc4;line-height:1.5;margin:.45rem 0;overflow-wrap:anywhere}
   .class-card .class-code-display{font:1.4rem var(--mono);letter-spacing:.22em;color:var(--accent)}
   #room-names,#class-error{overflow-wrap:anywhere}
+  .host-roster{margin:.85rem 0;max-height:min(40vh,24rem);overflow:auto}
+  .host-roster table{width:100%;border-collapse:collapse;text-align:left}
+  .host-roster caption{text-align:left;color:var(--accent);font-weight:650;margin-bottom:.35rem}
+  .host-roster th,.host-roster td{padding:.5rem .3rem;border-bottom:1px solid var(--fg-faint)}
+  .host-roster td:first-child{overflow-wrap:anywhere}
+  .host-roster :is(th,td):nth-child(2){text-align:right;font-variant-numeric:tabular-nums}
+  .host-roster :is(th,td):last-child{text-align:right;white-space:nowrap}
   #class-error{color:var(--accent);min-height:1.5rem}
   #leader-list{list-style:none;margin:1rem 0;max-height:min(45vh,24rem);overflow:auto}
   #leader-list li{display:flex;justify-content:space-between;gap:1rem;padding:.55rem .25rem;border-bottom:1px solid var(--fg-faint)}
@@ -701,7 +708,15 @@ SOFTWARE.
         <p class="class-code-display" id="room-code-text"></p>
         <p id="room-progress" role="status"></p>
         <p id="room-names"></p>
+        <div class="host-roster" id="host-roster" hidden>
+          <table>
+            <caption>Live player scores</caption>
+            <thead><tr><th scope="col">Player</th><th scope="col">Points</th><th scope="col">Progress</th></tr></thead>
+            <tbody id="host-roster-rows"></tbody>
+          </table>
+        </div>
         <button class="cta" type="button" id="start-room" hidden>Start activity</button>
+        <button class="cta" type="button" id="end-room" hidden>End game</button>
         <button class="secondary-link" type="button" id="copy-room" hidden>Copy join link</button>
         <section id="class-results" hidden aria-labelledby="leader-title">
           <h2 id="leader-title">Class leaderboard</h2>
