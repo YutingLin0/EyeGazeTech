@@ -29,6 +29,13 @@
       "when": 1795550400000,
       "tag": "0003_activity_speed_scoring",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1795554000000,
+      "tag": "0004_activity_question_count",
+      "breakpoints": true
     }
   ]
 }

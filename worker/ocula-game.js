@@ -1,17 +1,18 @@
     const phraseTiles=Array.from(board.children);
     const scoreEl=document.getElementById('score');
+    const scoreMax=document.getElementById('score-max');
     const sceneEl=document.getElementById('scene');
     const clueEl=document.getElementById('clue');
     const roundEl=document.getElementById('round-number');
     const feedback=document.getElementById('feedback');
     const FEEDBACK_MS=2200;
-    let roundIndex=0, score=0, answered=false, answerInFlight=false;
+    let roundLimit=rounds.length, roundIndex=0, score=0, answered=false, answerInFlight=false;
     let promptReady=false, preparingPrompt=false;
 
     function showRound() {
       sceneEl.textContent='Getting ready…';
       clueEl.textContent='';
-      roundEl.textContent='Round '+(roundIndex+1)+' of '+rounds.length;
+      roundEl.textContent='Round '+(roundIndex+1)+' of '+roundLimit;
       feedback.textContent='';
       answered=false;
       promptReady=false;
@@ -42,7 +43,9 @@
         }
       } finally {preparingPrompt=false;}
     }
-    function restoreRound(player) {
+    function restoreRound(player,questionCount) {
+      roundLimit=questionCount;
+      scoreMax.textContent=roundLimit*150;
       roundIndex=player.round;
       score=player.score;
       scoreEl.textContent=score;
@@ -74,10 +77,10 @@
       scoreEl.textContent=score;
       tile.classList.add('correct');
       phraseTiles.forEach(option=>{option.disabled=true;});
-      const final=result.round===rounds.length;
+      const final=result.round===roundLimit;
       const award=result.points===null?'Answer recorded.':
         'Message delivered! +'+result.points+' points'+(result.bonus?' ('+result.bonus+' speed bonus)':'')+'.';
-      feedback.textContent=award+(final?' Final score: '+score+' / '+(rounds.length*150)+'.':' Next prompt in a moment.');
+      feedback.textContent=award+(final?' Final score: '+score+' / '+(roundLimit*150)+'.':' Next prompt in a moment.');
       if (gazedEl===tile) locked=tile;
       clearDwell();
       setTimeout(()=>{

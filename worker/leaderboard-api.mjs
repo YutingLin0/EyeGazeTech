@@ -1,6 +1,7 @@
 const ACTIVITY_ROUTE='/api/classroom';
 const PAGES_ORIGIN='https://yutinglin0.github.io';
 const MAX_AGE=12*60*60*1000;
+const LEGACY_QUESTION_COUNT=10;
 const ROOM_ALPHABET='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 function respond(data,status,origin) {
@@ -16,10 +17,10 @@ async function roomView(db,room,token) {
   const me=players.find(player=>player.is_self);
   const host=room.host_token===token;
   if (!host&&!me) return null;
-  const finished=players.filter(player=>player.round===rounds.length).length;
+  const finished=players.filter(player=>player.round===room.question_count).length;
   const phase=!room.started?'waiting':room.ended||finished===players.length?'finished':'playing';
   return {
-    code:room.code,host,phase,finished,total:players.length,ended:!!room.ended,
+    code:room.code,host,phase,finished,total:players.length,ended:!!room.ended,questionCount:room.question_count,
     me:me&&{round:me.round,score:me.score,missed:!!me.missed},
     ...(phase==='waiting'?{names:players.map(player=>player.nickname)}:{}),
     ...(host&&phase!=='finished'?{roster:players.map(({nickname,round,score})=>({nickname,round,score}))}:{}),
@@ -42,11 +43,13 @@ async function activityApi(request,db) {
   if (!payload||typeof payload.action!=='string') return reply({error:'Invalid request.'},400);
   const now=Date.now();
   if (payload.action==='create') {
+    // A host on the previous frontend still creates a room that version can finish.
+    const questionCount=payload.questionCount===rounds.length ? rounds.length : LEGACY_QUESTION_COUNT;
     await db.prepare('DELETE FROM activity_rooms WHERE created_at < ?').bind(now-MAX_AGE).run();
     const token=crypto.randomUUID();
     for (let attempt=0;attempt<5;attempt++) {
       const code=Array.from(crypto.getRandomValues(new Uint8Array(6)),b=>ROOM_ALPHABET[b%ROOM_ALPHABET.length]).join('');
-      const result=await db.prepare('INSERT OR IGNORE INTO activity_rooms (code,host_token,created_at) VALUES (?,?,?)').bind(code,token,now).run();
+      const result=await db.prepare('INSERT OR IGNORE INTO activity_rooms (code,host_token,created_at,question_count) VALUES (?,?,?,?)').bind(code,token,now,questionCount).run();
       if (result.meta.changes) return reply({code,token},201);
     }
     return reply({error:'Could not create a room. Try again.'},503);
@@ -56,6 +59,8 @@ async function activityApi(request,db) {
   const room=await db.prepare('SELECT * FROM activity_rooms WHERE code=? AND created_at>=?').bind(code,now-MAX_AGE).first();
   if (!room) return reply({error:'Room not found or expired. Check the code with your host.'},404);
   if (action==='join') {
+    const supported=Number.isInteger(payload.questionCount)?payload.questionCount:LEGACY_QUESTION_COUNT;
+    if (supported<room.question_count) return reply({error:'Refresh the activity before joining this room.'},409);
     const name=typeof payload.nickname==='string'?payload.nickname.trim().replace(/\s+/g,' '):'';
     if (!name||name.length>24||/[\p{C}]/u.test(name)) return reply({error:'Enter a name of 1 to 24 characters.'},400);
     if (room.started) return reply({error:'This round set has already started.'},409);
@@ -99,7 +104,7 @@ async function activityApi(request,db) {
     if (!room.started) return reply({error:'Wait for your host to start.'},409);
     if (room.ended) return reply({error:'The host ended the game. Scores are final.',ended:true},409);
     const {round}=payload;
-    if (!Number.isInteger(round)||!rounds[round]) return reply({error:'Invalid prompt.'},400);
+    if (!Number.isInteger(round)||round<0||round>=room.question_count) return reply({error:'Invalid prompt.'},400);
     const ready=await db.prepare(
       'UPDATE activity_players SET prompt_started_at=COALESCE(prompt_started_at,?) WHERE room_code=? AND token=? AND round=? AND EXISTS (SELECT 1 FROM activity_rooms WHERE code=? AND ended=0) RETURNING round'
     ).bind(now,code,token,round,code).first();
@@ -118,7 +123,7 @@ async function activityApi(request,db) {
     const stopMessage={error:'The host ended the game. Scores are final.',ended:true};
     if (room.ended) return reply(stopMessage,409);
     const {round,choice}=payload;
-    if (!Number.isInteger(round)||!rounds[round]||!Number.isInteger(choice)||choice<0||choice>7) return reply({error:'Invalid answer.'},400);
+    if (!Number.isInteger(round)||round<0||round>=room.question_count||!Number.isInteger(choice)||choice<0||choice>7) return reply({error:'Invalid answer.'},400);
     if (player.round>round) return reply({correct:true,round:player.round,score:player.score,points:null});
     if (player.round!==round) return reply({error:'This prompt is out of date. Refresh the activity.'},409);
     const correct=rounds[round].phrase===choice;

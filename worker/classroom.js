@@ -62,11 +62,12 @@
     }
     function showRoster(view) {
       const players=view.roster??[];
+      const questionCount=view.questionCount??10;
       roster.hidden=!view.host||view.phase==='finished'||!players.length;
       if (roster.hidden) return;
       const rows=players.map(player=>{
         const row=document.createElement('tr');
-        const progress=player.round===rounds.length?'Finished':player.round+' / '+rounds.length;
+        const progress=player.round===questionCount?'Finished':player.round+' / '+questionCount;
         for (const text of [player.nickname,String(player.score),progress]) {
           const cell=document.createElement('td');
           cell.textContent=text;
@@ -108,9 +109,10 @@
           setState('classroom');
         }
       }
-      if (view.phase==='playing'&&!view.host&&view.me.round<rounds.length&&!activityOpened) {
+      const questionCount=view.questionCount??10;
+      if (view.phase==='playing'&&!view.host&&view.me.round<questionCount&&!activityOpened) {
         activityOpened=true;
-        restoreRound(view.me);
+        restoreRound(view.me,questionCount);
         setState('welcome');
       }
     }
@@ -148,7 +150,7 @@
       entryBusy=true;
       setClassError();
       try {
-        setMembership(await roomRequest(action,data));
+        setMembership(await roomRequest(action,{...data,questionCount:rounds.length}));
         await refreshRoom();
       } catch (error) {setClassError(error);}
       finally {entryBusy=false;}

@@ -801,7 +801,7 @@ SOFTWARE.
       <p id="feedback" role="status"></p>
       <div class="status-bar">
         <span class="item"><span class="dot" id="status-dot"></span><span class="v" id="status-text">Tracking</span></span>
-        <span class="item">Score <strong class="v accent" id="score">0</strong> / 1500</span>
+        <span class="item">Score <strong class="v accent" id="score">0</strong> / <span id="score-max">1950</span></span>
         <span class="item camera-control" id="calib-result" role="status" hidden></span>
         <span class="item camera-control">Dwell <span class="v" id="dwell-display">0.6 s</span></span>
         <button class="gaze-clickable camera-control" data-action="dwell-cycle">Speed</button>
@@ -1378,23 +1378,27 @@ SOFTWARE.
       {phrase:0, scene:'Joining in', clue:'A friend asks if you want to play. You do. Give them your answer.'},
       {phrase:1, scene:'A quiet break', clue:'Someone asks if you want the music turned up. You don’t. Give them your answer.'},
       {phrase:4, scene:'Missing pieces', clue:'You can’t find the pieces for your group project. Ask someone to help you look.'},
-      {phrase:2, scene:'Teamwork', clue:'Your partner finishes setting up the activity for everyone. Show your appreciation.'}
+      {phrase:2, scene:'Teamwork', clue:'Your partner finishes setting up the activity for everyone. Show your appreciation.'},
+      {phrase:5, scene:'Snack time', clue:'Your cup is empty and you’re thirsty. Ask the person next to you for a refill.'},
+      {phrase:0, scene:'Ready to present', clue:'Your teacher asks if you’re ready to share your project. You are. Give your answer.'},
+      {phrase:1, scene:'An extra worksheet', clue:'A classmate offers you another worksheet. You already have one. Decline the extra copy.'}
     ];
 
         const phraseTiles=Array.from(board.children);
     const scoreEl=document.getElementById('score');
+    const scoreMax=document.getElementById('score-max');
     const sceneEl=document.getElementById('scene');
     const clueEl=document.getElementById('clue');
     const roundEl=document.getElementById('round-number');
     const feedback=document.getElementById('feedback');
     const FEEDBACK_MS=2200;
-    let roundIndex=0, score=0, answered=false, answerInFlight=false;
+    let roundLimit=rounds.length, roundIndex=0, score=0, answered=false, answerInFlight=false;
     let promptReady=false, preparingPrompt=false;
 
     function showRound() {
       sceneEl.textContent='Getting ready…';
       clueEl.textContent='';
-      roundEl.textContent='Round '+(roundIndex+1)+' of '+rounds.length;
+      roundEl.textContent='Round '+(roundIndex+1)+' of '+roundLimit;
       feedback.textContent='';
       answered=false;
       promptReady=false;
@@ -1425,7 +1429,9 @@ SOFTWARE.
         }
       } finally {preparingPrompt=false;}
     }
-    function restoreRound(player) {
+    function restoreRound(player,questionCount) {
+      roundLimit=questionCount;
+      scoreMax.textContent=roundLimit*150;
       roundIndex=player.round;
       score=player.score;
       scoreEl.textContent=score;
@@ -1457,10 +1463,10 @@ SOFTWARE.
       scoreEl.textContent=score;
       tile.classList.add('correct');
       phraseTiles.forEach(option=>{option.disabled=true;});
-      const final=result.round===rounds.length;
+      const final=result.round===roundLimit;
       const award=result.points===null?'Answer recorded.':
         'Message delivered! +'+result.points+' points'+(result.bonus?' ('+result.bonus+' speed bonus)':'')+'.';
-      feedback.textContent=award+(final?' Final score: '+score+' / '+(rounds.length*150)+'.':' Next prompt in a moment.');
+      feedback.textContent=award+(final?' Final score: '+score+' / '+(roundLimit*150)+'.':' Next prompt in a moment.');
       if (gazedEl===tile) locked=tile;
       clearDwell();
       setTimeout(()=>{
@@ -1538,11 +1544,12 @@ SOFTWARE.
     }
     function showRoster(view) {
       const players=view.roster??[];
+      const questionCount=view.questionCount??10;
       roster.hidden=!view.host||view.phase==='finished'||!players.length;
       if (roster.hidden) return;
       const rows=players.map(player=>{
         const row=document.createElement('tr');
-        const progress=player.round===rounds.length?'Finished':player.round+' / '+rounds.length;
+        const progress=player.round===questionCount?'Finished':player.round+' / '+questionCount;
         for (const text of [player.nickname,String(player.score),progress]) {
           const cell=document.createElement('td');
           cell.textContent=text;
@@ -1584,9 +1591,10 @@ SOFTWARE.
           setState('classroom');
         }
       }
-      if (view.phase==='playing'&&!view.host&&view.me.round<rounds.length&&!activityOpened) {
+      const questionCount=view.questionCount??10;
+      if (view.phase==='playing'&&!view.host&&view.me.round<questionCount&&!activityOpened) {
         activityOpened=true;
-        restoreRound(view.me);
+        restoreRound(view.me,questionCount);
         setState('welcome');
       }
     }
@@ -1624,7 +1632,7 @@ SOFTWARE.
       entryBusy=true;
       setClassError();
       try {
-        setMembership(await roomRequest(action,data));
+        setMembership(await roomRequest(action,{...data,questionCount:rounds.length}));
         await refreshRoom();
       } catch (error) {setClassError(error);}
       finally {entryBusy=false;}
