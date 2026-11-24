@@ -1,10 +1,10 @@
-# Eye Gaze Lab
+# Eye Gaze Activity
 
-An English classroom game inspired by the Tobii Dynavox TD I-Series. Play ten communication rounds and compare final scores. Choose **Precision setup** to calibrate the webcam, or **Play with clicks** to use a mouse, touch, or keyboard. Camera processing stays in the browser.
+An English classroom game inspired by the Tobii Dynavox TD I-Series. The teacher hosts a class, shares the room code, and starts when everyone has entered a name. Players choose **Precision setup** to calibrate the webcam or **Play with clicks** to use a mouse, touch, or keyboard. The leaderboard appears when every joined player finishes all ten prompts and shows ties.
 
 ## Build and run
 
-Run `node worker/build.mjs` (Node.js 20+), then deploy `dist/server/index.js` as a Cloudflare Worker. The game runs without a database.
+Run `node worker/build.mjs` (Node.js 20+), then deploy `dist/server/index.js` as a Cloudflare Worker with the D1 binding `DB` and the included migrations. To generate the GitHub Pages frontend, run `node worker/build.mjs --pages <HTTPS API origin>` and publish `docs/`. Camera processing stays in the browser. Names and scores are associated with a temporary classroom room.
 
 ## How gaze calibration works
 

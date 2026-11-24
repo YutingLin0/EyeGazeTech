@@ -1,5 +1,5 @@
 <!--
-OCULA source adapted for Eye Gaze Lab (revision 7b0d9495564161b37f114cec4205975549d34603).
+OCULA source adapted for Eye Gaze Activity (revision 7b0d9495564161b37f114cec4205975549d34603).
 MIT License
 
 Copyright (c) 2026 Husnain Bukhari
@@ -27,7 +27,7 @@ SOFTWARE.
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>OCULA · Eye Gaze Lab</title>
+<title>Eye Gaze Activity</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@300;400;500&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
@@ -113,6 +113,7 @@ SOFTWARE.
     transition: opacity 0.45s ease;
     z-index: 1;
   }
+  body[data-state="classroom"] .screen.classroom,
   body[data-state="welcome"]   .screen.welcome,
   body[data-state="loading"]   .screen.loading,
   body[data-state="calibrate"] .screen.calibrate,
@@ -628,7 +629,7 @@ SOFTWARE.
   .tile.correct{border-color:var(--success);background:#153a33}
   .tile.incorrect{border-color:#b78463}
   .game-actions{display:grid;grid-template-columns:1fr minmax(7rem,11rem);gap:.45rem .75rem}
-  #feedback{font-size:.92rem;min-height:2.5rem;color:var(--fg);display:flex;align-items:center}
+  #feedback{grid-column:1/-1;font-size:.92rem;min-height:2.5rem;color:var(--fg);display:flex;align-items:center}
   #advance{width:100%;justify-content:center;min-height:2.4rem;padding:.45rem .6rem;letter-spacing:.08em}
   #advance.gazed{outline:2px solid var(--fg);outline-offset:2px}
   .status-bar{position:static;left:auto;bottom:auto;transform:none;width:auto;grid-column:1/-1;gap:.4rem .85rem;flex-wrap:wrap;justify-content:center;padding:.48rem .6rem;font-size:.72rem;letter-spacing:.03em}
@@ -636,7 +637,7 @@ SOFTWARE.
   .last-spoken{top:auto;bottom:6.5rem;pointer-events:none}
   .face-warn{top:4.2rem;max-width:90vw}
   #webcam{top:1.2rem;right:1.2rem;bottom:auto;width:7.25rem;height:4.1rem;pointer-events:none}
-  body[data-state="welcome"] #webcam,body[data-state="error"] #webcam,body[data-state="tracking"]:not(.camera-on) #webcam{display:none}
+  body[data-state="welcome"] #webcam,body[data-state="classroom"] #webcam,body[data-state="error"] #webcam,body[data-state="tracking"]:not(.camera-on) #webcam{display:none}
   body:not(.camera-on) .cursor{display:none}
   body:not(.camera-on) .camera-control{display:none}
   @media(max-width:768px){
@@ -656,9 +657,26 @@ SOFTWARE.
   .cancel-calibration{position:absolute;bottom:.4rem;left:50%;transform:translateX(-50%);white-space:nowrap}
   #calib-result{color:var(--accent);flex-basis:100%;text-align:center}
   .calibrate .calib-instructions{pointer-events:none}
+
+  .classroom{overflow:auto;padding:1.5rem}
+  .class-card{width:min(100%,34rem);margin:auto}
+  .class-card h1,.welcome .activity-title{font:clamp(2.5rem,9vw,4.7rem)/.98 var(--serif);letter-spacing:-.025em;margin-bottom:1rem}
+  .class-card h2{font:1.9rem/1.1 var(--serif);margin:.3rem 0 .5rem}
+  .class-card label{display:grid;gap:.35rem;font-weight:600}
+  .class-card input{border:1px solid #736454;background:var(--bg-2);color:var(--fg);border-radius:.3rem;padding:.7rem;font:inherit;width:100%}
+  #class-code{text-transform:uppercase}
+  #join-room{display:grid;gap:.85rem;margin:1rem 0}
+  .class-card .cta{justify-content:center}
+  .class-card p{color:#d4cfc4;line-height:1.5;margin:.45rem 0;overflow-wrap:anywhere}
+  .class-card .class-code-display{font:1.4rem var(--mono);letter-spacing:.22em;color:var(--accent)}
+  #room-names,#class-error{overflow-wrap:anywhere}
+  #class-error{color:var(--accent);min-height:1.5rem}
+  #leader-list{list-style:none;margin:1rem 0;max-height:min(45vh,24rem);overflow:auto}
+  #leader-list li{display:flex;justify-content:space-between;gap:1rem;padding:.55rem .25rem;border-bottom:1px solid var(--fg-faint)}
+  #leader-list li:first-child,.class-card #class-winner{color:var(--accent)}
 </style>
 </head>
-<body data-state="welcome">
+<body data-state="classroom">
 
   <video id="webcam" playsinline autoplay muted></video>
 
@@ -667,10 +685,38 @@ SOFTWARE.
   <span class="bracket bl"></span>
   <span class="bracket br"></span>
 
+  <main class="screen classroom">
+    <div class="class-card">
+      <h1>Eye Gaze Activity</h1>
+      <section id="class-entry" aria-label="Join or host">
+        <form id="join-room">
+          <label>Your name<input id="class-name" required maxlength="24" autocomplete="nickname"></label>
+          <label>Room code<input id="class-code" required minlength="6" maxlength="6" autocomplete="off" autocapitalize="characters" pattern="[A-Za-z2-9]{6}"></label>
+          <button class="cta" type="submit">Join activity</button>
+        </form>
+        <button class="secondary-link" id="create-room" type="button">Host a class</button>
+      </section>
+      <section id="room-panel" aria-label="Classroom room" hidden>
+        <p id="room-role"></p>
+        <p class="class-code-display" id="room-code-text"></p>
+        <p id="room-progress" role="status"></p>
+        <p id="room-names"></p>
+        <button class="cta" type="button" id="start-room" hidden>Start activity</button>
+        <button class="secondary-link" type="button" id="copy-room" hidden>Copy join link</button>
+        <section id="class-results" hidden aria-labelledby="leader-title">
+          <h2 id="leader-title">Class leaderboard</h2>
+          <p id="class-winner"></p>
+          <ol id="leader-list"></ol>
+        </section>
+        <button class="secondary-link" type="button" id="leave-room">Leave room</button>
+      </section>
+      <p id="class-error" role="status"></p>
+    </div>
+  </main>
+
   <!-- ============ WELCOME ============ -->
   <div class="screen welcome">
-    <div class="eyebrow">Eye Gaze Lab · Classroom activity</div>
-    <h1>O C U L <span class="accent">a</span></h1>
+    <h1 class="activity-title">Eye Gaze <span class="accent">Activity</span></h1>
     <div class="tagline">Find the right message</div>
     <p class="lede">
       Choose a spoken message in each of ten situations. Score 100 points on the first try or 50 after a retry.
@@ -693,7 +739,7 @@ SOFTWARE.
       <button class="cta" id="begin-btn">Precision setup</button>
       <button class="secondary-link" data-action="mouse">Play with clicks</button>
     </div>
-    <div class="credits"><a class="secondary-link" href="https://github.com/revolutionarybukhari/ocula">OCULA source</a></div>
+
   </div>
 
   <!-- ============ LOADING ============ -->
@@ -724,7 +770,7 @@ SOFTWARE.
   <!-- ============ TRACKING ============ -->
   <div class="screen tracking">
     <div class="board-header">
-      <div class="title">O C U L <span class="accent">a</span></div>
+      <div class="title">Eye Gaze <span class="accent">Activity</span></div>
       <div class="sub">Find the right message</div>
     </div>
     <section class="round-panel" aria-labelledby="scene">
@@ -737,7 +783,6 @@ SOFTWARE.
     </div>
     <div class="game-actions">
       <p id="feedback" role="status"></p>
-      <button class="cta gaze-clickable" id="advance" hidden>Play again</button>
       <div class="status-bar">
         <span class="item"><span class="dot" id="status-dot"></span><span class="v" id="status-text">Tracking</span></span>
         <span class="item">Score <strong class="v accent" id="score">0</strong> / 1000</span>
@@ -802,7 +847,7 @@ SOFTWARE.
     const errorMsg     = document.getElementById('error-msg');
 
     // ───────── state ─────────
-    let appState = 'welcome'; // welcome | loading | calibrate | tracking | error
+    let appState='classroom';
     function setState(s) {
       appState = s;
       document.body.dataset.state = s;
@@ -1292,8 +1337,9 @@ SOFTWARE.
       }
     }
     buildBoard();
+    // ACTIVITY ROUNDS
     // OCULA CLASS GAME
-    setState('welcome');
+    // CLASSROOM CLIENT
     loop();
   })();
   </script>
